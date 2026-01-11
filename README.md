@@ -5,7 +5,7 @@ This project provides a `winmm.dll` proxy DLL that patches the PC version of Chr
 ## Project Structure
 
 ```
-parasite/
+crossfix/
 ├── dllmain.cpp              # Main entry point
 ├── settings.ini             # Configuration file
 ├── patches/                 # Game patches
@@ -56,7 +56,7 @@ Comments are supported using the `#` character.
 
 ## Building
 
-1. Open `parasite.sln` in Visual Studio
+1. Open `crossfix.sln` in Visual Studio
 2. Select either configuration:
    - **Debug - Proxy | Win32** for debugging
    - **Release - Proxy | Win32** for production

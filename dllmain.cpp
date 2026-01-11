@@ -19,7 +19,7 @@
 
 
 // Get handle from the injected process
-HANDLE aoe_handle = GetCurrentProcess();
+HANDLE crossfix_handle = GetCurrentProcess();
 
 // Spawn thread to do work
 DWORD WINAPI MainThread(LPVOID param) {
