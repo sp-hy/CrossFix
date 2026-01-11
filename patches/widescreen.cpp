@@ -99,8 +99,6 @@ bool ApplyWidescreenPatch(uintptr_t base, WidescreenMode mode) {
 			return false;
 	}
 	
-	std::cout << "Applying widescreen patch in " << modeName << " mode..." << std::endl;
-	
 	// Calculate the addresses to patch
 	uintptr_t addr1 = base + 0x18EE7B;
 	uintptr_t addr2 = base + 0x18AD25;
@@ -142,7 +140,9 @@ bool ApplyWidescreenPatch(uintptr_t base, WidescreenMode mode) {
 	}
 	
 	std::cout << "Widescreen patch (" << modeName << ") applied successfully!" << std::endl;
+#ifdef _DEBUG
 	std::cout << "  Patched 0x" << std::hex << addr1 << std::dec << std::endl;
 	std::cout << "  Patched 0x" << std::hex << addr2 << std::dec << std::endl;
+#endif
 	return true;
 }

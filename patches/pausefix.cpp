@@ -3,8 +3,6 @@
 
 // Apply the disable pause on focus loss patch
 bool ApplyDisablePausePatch(uintptr_t base) {
-	std::cout << "Applying disable pause on focus loss patch..." << std::endl;
-	
 	// Calculate the address to patch
 	uintptr_t addr = base + 0x184096;
 	
@@ -19,6 +17,8 @@ bool ApplyDisablePausePatch(uintptr_t base) {
 	}
 	
 	std::cout << "Disable pause on focus loss patch applied successfully!" << std::endl;
+#ifdef _DEBUG
 	std::cout << "  Patched 0x" << std::hex << addr << std::dec << std::endl;
+#endif
 	return true;
 }

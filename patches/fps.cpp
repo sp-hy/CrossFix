@@ -3,8 +3,6 @@
 
 // Apply the double FPS patch
 bool ApplyDoubleFpsPatch(uintptr_t base) {
-	std::cout << "Applying double FPS patch..." << std::endl;
-	
 	// Calculate the addresses to patch
 	uintptr_t addr1 = base + 0x188A6D;
 	uintptr_t addr2 = base + 0x18557E;
@@ -24,7 +22,9 @@ bool ApplyDoubleFpsPatch(uintptr_t base) {
 	}
 	
 	std::cout << "Double FPS patch applied successfully!" << std::endl;
+#ifdef _DEBUG
 	std::cout << "  Patched 0x" << std::hex << addr1 << std::dec << std::endl;
 	std::cout << "  Patched 0x" << std::hex << addr2 << std::dec << std::endl;
+#endif
 	return true;
 }
