@@ -1,0 +1,544 @@
+.model flat, C
+.code
+extern mProcs:DWORD
+CloseDriver_wrapper proc
+	jmp mProcs[0*4]
+CloseDriver_wrapper endp
+DefDriverProc_wrapper proc
+	jmp mProcs[1*4]
+DefDriverProc_wrapper endp
+DriverCallback_wrapper proc
+	jmp mProcs[2*4]
+DriverCallback_wrapper endp
+DrvGetModuleHandle_wrapper proc
+	jmp mProcs[3*4]
+DrvGetModuleHandle_wrapper endp
+GetDriverModuleHandle_wrapper proc
+	jmp mProcs[4*4]
+GetDriverModuleHandle_wrapper endp
+OpenDriver_wrapper proc
+	jmp mProcs[5*4]
+OpenDriver_wrapper endp
+PlaySound_wrapper proc
+	jmp mProcs[6*4]
+PlaySound_wrapper endp
+PlaySoundA_wrapper proc
+	jmp mProcs[7*4]
+PlaySoundA_wrapper endp
+PlaySoundW_wrapper proc
+	jmp mProcs[8*4]
+PlaySoundW_wrapper endp
+SendDriverMessage_wrapper proc
+	jmp mProcs[9*4]
+SendDriverMessage_wrapper endp
+WOWAppExit_wrapper proc
+	jmp mProcs[10*4]
+WOWAppExit_wrapper endp
+auxGetDevCapsA_wrapper proc
+	jmp mProcs[11*4]
+auxGetDevCapsA_wrapper endp
+auxGetDevCapsW_wrapper proc
+	jmp mProcs[12*4]
+auxGetDevCapsW_wrapper endp
+auxGetNumDevs_wrapper proc
+	jmp mProcs[13*4]
+auxGetNumDevs_wrapper endp
+auxGetVolume_wrapper proc
+	jmp mProcs[14*4]
+auxGetVolume_wrapper endp
+auxOutMessage_wrapper proc
+	jmp mProcs[15*4]
+auxOutMessage_wrapper endp
+auxSetVolume_wrapper proc
+	jmp mProcs[16*4]
+auxSetVolume_wrapper endp
+joyConfigChanged_wrapper proc
+	jmp mProcs[17*4]
+joyConfigChanged_wrapper endp
+joyGetDevCapsA_wrapper proc
+	jmp mProcs[18*4]
+joyGetDevCapsA_wrapper endp
+joyGetDevCapsW_wrapper proc
+	jmp mProcs[19*4]
+joyGetDevCapsW_wrapper endp
+joyGetNumDevs_wrapper proc
+	jmp mProcs[20*4]
+joyGetNumDevs_wrapper endp
+joyGetPos_wrapper proc
+	jmp mProcs[21*4]
+joyGetPos_wrapper endp
+joyGetPosEx_wrapper proc
+	jmp mProcs[22*4]
+joyGetPosEx_wrapper endp
+joyGetThreshold_wrapper proc
+	jmp mProcs[23*4]
+joyGetThreshold_wrapper endp
+joyReleaseCapture_wrapper proc
+	jmp mProcs[24*4]
+joyReleaseCapture_wrapper endp
+joySetCapture_wrapper proc
+	jmp mProcs[25*4]
+joySetCapture_wrapper endp
+joySetThreshold_wrapper proc
+	jmp mProcs[26*4]
+joySetThreshold_wrapper endp
+mciDriverNotify_wrapper proc
+	jmp mProcs[27*4]
+mciDriverNotify_wrapper endp
+mciDriverYield_wrapper proc
+	jmp mProcs[28*4]
+mciDriverYield_wrapper endp
+mciExecute_wrapper proc
+	jmp mProcs[29*4]
+mciExecute_wrapper endp
+mciFreeCommandResource_wrapper proc
+	jmp mProcs[30*4]
+mciFreeCommandResource_wrapper endp
+mciGetCreatorTask_wrapper proc
+	jmp mProcs[31*4]
+mciGetCreatorTask_wrapper endp
+mciGetDeviceIDA_wrapper proc
+	jmp mProcs[32*4]
+mciGetDeviceIDA_wrapper endp
+mciGetDeviceIDFromElementIDA_wrapper proc
+	jmp mProcs[33*4]
+mciGetDeviceIDFromElementIDA_wrapper endp
+mciGetDeviceIDFromElementIDW_wrapper proc
+	jmp mProcs[34*4]
+mciGetDeviceIDFromElementIDW_wrapper endp
+mciGetDeviceIDW_wrapper proc
+	jmp mProcs[35*4]
+mciGetDeviceIDW_wrapper endp
+mciGetDriverData_wrapper proc
+	jmp mProcs[36*4]
+mciGetDriverData_wrapper endp
+mciGetErrorStringA_wrapper proc
+	jmp mProcs[37*4]
+mciGetErrorStringA_wrapper endp
+mciGetErrorStringW_wrapper proc
+	jmp mProcs[38*4]
+mciGetErrorStringW_wrapper endp
+mciGetYieldProc_wrapper proc
+	jmp mProcs[39*4]
+mciGetYieldProc_wrapper endp
+mciLoadCommandResource_wrapper proc
+	jmp mProcs[40*4]
+mciLoadCommandResource_wrapper endp
+mciSendCommandA_wrapper proc
+	jmp mProcs[41*4]
+mciSendCommandA_wrapper endp
+mciSendCommandW_wrapper proc
+	jmp mProcs[42*4]
+mciSendCommandW_wrapper endp
+mciSendStringA_wrapper proc
+	jmp mProcs[43*4]
+mciSendStringA_wrapper endp
+mciSendStringW_wrapper proc
+	jmp mProcs[44*4]
+mciSendStringW_wrapper endp
+mciSetDriverData_wrapper proc
+	jmp mProcs[45*4]
+mciSetDriverData_wrapper endp
+mciSetYieldProc_wrapper proc
+	jmp mProcs[46*4]
+mciSetYieldProc_wrapper endp
+midiConnect_wrapper proc
+	jmp mProcs[47*4]
+midiConnect_wrapper endp
+midiDisconnect_wrapper proc
+	jmp mProcs[48*4]
+midiDisconnect_wrapper endp
+midiInAddBuffer_wrapper proc
+	jmp mProcs[49*4]
+midiInAddBuffer_wrapper endp
+midiInClose_wrapper proc
+	jmp mProcs[50*4]
+midiInClose_wrapper endp
+midiInGetDevCapsA_wrapper proc
+	jmp mProcs[51*4]
+midiInGetDevCapsA_wrapper endp
+midiInGetDevCapsW_wrapper proc
+	jmp mProcs[52*4]
+midiInGetDevCapsW_wrapper endp
+midiInGetErrorTextA_wrapper proc
+	jmp mProcs[53*4]
+midiInGetErrorTextA_wrapper endp
+midiInGetErrorTextW_wrapper proc
+	jmp mProcs[54*4]
+midiInGetErrorTextW_wrapper endp
+midiInGetID_wrapper proc
+	jmp mProcs[55*4]
+midiInGetID_wrapper endp
+midiInGetNumDevs_wrapper proc
+	jmp mProcs[56*4]
+midiInGetNumDevs_wrapper endp
+midiInMessage_wrapper proc
+	jmp mProcs[57*4]
+midiInMessage_wrapper endp
+midiInOpen_wrapper proc
+	jmp mProcs[58*4]
+midiInOpen_wrapper endp
+midiInPrepareHeader_wrapper proc
+	jmp mProcs[59*4]
+midiInPrepareHeader_wrapper endp
+midiInReset_wrapper proc
+	jmp mProcs[60*4]
+midiInReset_wrapper endp
+midiInStart_wrapper proc
+	jmp mProcs[61*4]
+midiInStart_wrapper endp
+midiInStop_wrapper proc
+	jmp mProcs[62*4]
+midiInStop_wrapper endp
+midiInUnprepareHeader_wrapper proc
+	jmp mProcs[63*4]
+midiInUnprepareHeader_wrapper endp
+midiOutCacheDrumPatches_wrapper proc
+	jmp mProcs[64*4]
+midiOutCacheDrumPatches_wrapper endp
+midiOutCachePatches_wrapper proc
+	jmp mProcs[65*4]
+midiOutCachePatches_wrapper endp
+midiOutClose_wrapper proc
+	jmp mProcs[66*4]
+midiOutClose_wrapper endp
+midiOutGetDevCapsA_wrapper proc
+	jmp mProcs[67*4]
+midiOutGetDevCapsA_wrapper endp
+midiOutGetDevCapsW_wrapper proc
+	jmp mProcs[68*4]
+midiOutGetDevCapsW_wrapper endp
+midiOutGetErrorTextA_wrapper proc
+	jmp mProcs[69*4]
+midiOutGetErrorTextA_wrapper endp
+midiOutGetErrorTextW_wrapper proc
+	jmp mProcs[70*4]
+midiOutGetErrorTextW_wrapper endp
+midiOutGetID_wrapper proc
+	jmp mProcs[71*4]
+midiOutGetID_wrapper endp
+midiOutGetNumDevs_wrapper proc
+	jmp mProcs[72*4]
+midiOutGetNumDevs_wrapper endp
+midiOutGetVolume_wrapper proc
+	jmp mProcs[73*4]
+midiOutGetVolume_wrapper endp
+midiOutLongMsg_wrapper proc
+	jmp mProcs[74*4]
+midiOutLongMsg_wrapper endp
+midiOutMessage_wrapper proc
+	jmp mProcs[75*4]
+midiOutMessage_wrapper endp
+midiOutOpen_wrapper proc
+	jmp mProcs[76*4]
+midiOutOpen_wrapper endp
+midiOutPrepareHeader_wrapper proc
+	jmp mProcs[77*4]
+midiOutPrepareHeader_wrapper endp
+midiOutReset_wrapper proc
+	jmp mProcs[78*4]
+midiOutReset_wrapper endp
+midiOutSetVolume_wrapper proc
+	jmp mProcs[79*4]
+midiOutSetVolume_wrapper endp
+midiOutShortMsg_wrapper proc
+	jmp mProcs[80*4]
+midiOutShortMsg_wrapper endp
+midiOutUnprepareHeader_wrapper proc
+	jmp mProcs[81*4]
+midiOutUnprepareHeader_wrapper endp
+midiStreamClose_wrapper proc
+	jmp mProcs[82*4]
+midiStreamClose_wrapper endp
+midiStreamOpen_wrapper proc
+	jmp mProcs[83*4]
+midiStreamOpen_wrapper endp
+midiStreamOut_wrapper proc
+	jmp mProcs[84*4]
+midiStreamOut_wrapper endp
+midiStreamPause_wrapper proc
+	jmp mProcs[85*4]
+midiStreamPause_wrapper endp
+midiStreamPosition_wrapper proc
+	jmp mProcs[86*4]
+midiStreamPosition_wrapper endp
+midiStreamProperty_wrapper proc
+	jmp mProcs[87*4]
+midiStreamProperty_wrapper endp
+midiStreamRestart_wrapper proc
+	jmp mProcs[88*4]
+midiStreamRestart_wrapper endp
+midiStreamStop_wrapper proc
+	jmp mProcs[89*4]
+midiStreamStop_wrapper endp
+mixerClose_wrapper proc
+	jmp mProcs[90*4]
+mixerClose_wrapper endp
+mixerGetControlDetailsA_wrapper proc
+	jmp mProcs[91*4]
+mixerGetControlDetailsA_wrapper endp
+mixerGetControlDetailsW_wrapper proc
+	jmp mProcs[92*4]
+mixerGetControlDetailsW_wrapper endp
+mixerGetDevCapsA_wrapper proc
+	jmp mProcs[93*4]
+mixerGetDevCapsA_wrapper endp
+mixerGetDevCapsW_wrapper proc
+	jmp mProcs[94*4]
+mixerGetDevCapsW_wrapper endp
+mixerGetID_wrapper proc
+	jmp mProcs[95*4]
+mixerGetID_wrapper endp
+mixerGetLineControlsA_wrapper proc
+	jmp mProcs[96*4]
+mixerGetLineControlsA_wrapper endp
+mixerGetLineControlsW_wrapper proc
+	jmp mProcs[97*4]
+mixerGetLineControlsW_wrapper endp
+mixerGetLineInfoA_wrapper proc
+	jmp mProcs[98*4]
+mixerGetLineInfoA_wrapper endp
+mixerGetLineInfoW_wrapper proc
+	jmp mProcs[99*4]
+mixerGetLineInfoW_wrapper endp
+mixerGetNumDevs_wrapper proc
+	jmp mProcs[100*4]
+mixerGetNumDevs_wrapper endp
+mixerMessage_wrapper proc
+	jmp mProcs[101*4]
+mixerMessage_wrapper endp
+mixerOpen_wrapper proc
+	jmp mProcs[102*4]
+mixerOpen_wrapper endp
+mixerSetControlDetails_wrapper proc
+	jmp mProcs[103*4]
+mixerSetControlDetails_wrapper endp
+mmDrvInstall_wrapper proc
+	jmp mProcs[104*4]
+mmDrvInstall_wrapper endp
+mmGetCurrentTask_wrapper proc
+	jmp mProcs[105*4]
+mmGetCurrentTask_wrapper endp
+mmTaskBlock_wrapper proc
+	jmp mProcs[106*4]
+mmTaskBlock_wrapper endp
+mmTaskCreate_wrapper proc
+	jmp mProcs[107*4]
+mmTaskCreate_wrapper endp
+mmTaskSignal_wrapper proc
+	jmp mProcs[108*4]
+mmTaskSignal_wrapper endp
+mmTaskYield_wrapper proc
+	jmp mProcs[109*4]
+mmTaskYield_wrapper endp
+mmioAdvance_wrapper proc
+	jmp mProcs[110*4]
+mmioAdvance_wrapper endp
+mmioAscend_wrapper proc
+	jmp mProcs[111*4]
+mmioAscend_wrapper endp
+mmioClose_wrapper proc
+	jmp mProcs[112*4]
+mmioClose_wrapper endp
+mmioCreateChunk_wrapper proc
+	jmp mProcs[113*4]
+mmioCreateChunk_wrapper endp
+mmioDescend_wrapper proc
+	jmp mProcs[114*4]
+mmioDescend_wrapper endp
+mmioFlush_wrapper proc
+	jmp mProcs[115*4]
+mmioFlush_wrapper endp
+mmioGetInfo_wrapper proc
+	jmp mProcs[116*4]
+mmioGetInfo_wrapper endp
+mmioInstallIOProcA_wrapper proc
+	jmp mProcs[117*4]
+mmioInstallIOProcA_wrapper endp
+mmioInstallIOProcW_wrapper proc
+	jmp mProcs[118*4]
+mmioInstallIOProcW_wrapper endp
+mmioOpenA_wrapper proc
+	jmp mProcs[119*4]
+mmioOpenA_wrapper endp
+mmioOpenW_wrapper proc
+	jmp mProcs[120*4]
+mmioOpenW_wrapper endp
+mmioRead_wrapper proc
+	jmp mProcs[121*4]
+mmioRead_wrapper endp
+mmioRenameA_wrapper proc
+	jmp mProcs[122*4]
+mmioRenameA_wrapper endp
+mmioRenameW_wrapper proc
+	jmp mProcs[123*4]
+mmioRenameW_wrapper endp
+mmioSeek_wrapper proc
+	jmp mProcs[124*4]
+mmioSeek_wrapper endp
+mmioSendMessage_wrapper proc
+	jmp mProcs[125*4]
+mmioSendMessage_wrapper endp
+mmioSetBuffer_wrapper proc
+	jmp mProcs[126*4]
+mmioSetBuffer_wrapper endp
+mmioSetInfo_wrapper proc
+	jmp mProcs[127*4]
+mmioSetInfo_wrapper endp
+mmioStringToFOURCCA_wrapper proc
+	jmp mProcs[128*4]
+mmioStringToFOURCCA_wrapper endp
+mmioStringToFOURCCW_wrapper proc
+	jmp mProcs[129*4]
+mmioStringToFOURCCW_wrapper endp
+mmioWrite_wrapper proc
+	jmp mProcs[130*4]
+mmioWrite_wrapper endp
+mmsystemGetVersion_wrapper proc
+	jmp mProcs[131*4]
+mmsystemGetVersion_wrapper endp
+sndPlaySoundA_wrapper proc
+	jmp mProcs[132*4]
+sndPlaySoundA_wrapper endp
+sndPlaySoundW_wrapper proc
+	jmp mProcs[133*4]
+sndPlaySoundW_wrapper endp
+timeBeginPeriod_wrapper proc
+	jmp mProcs[134*4]
+timeBeginPeriod_wrapper endp
+timeEndPeriod_wrapper proc
+	jmp mProcs[135*4]
+timeEndPeriod_wrapper endp
+timeGetDevCaps_wrapper proc
+	jmp mProcs[136*4]
+timeGetDevCaps_wrapper endp
+timeGetSystemTime_wrapper proc
+	jmp mProcs[137*4]
+timeGetSystemTime_wrapper endp
+timeGetTime_wrapper proc
+	jmp mProcs[138*4]
+timeGetTime_wrapper endp
+timeKillEvent_wrapper proc
+	jmp mProcs[139*4]
+timeKillEvent_wrapper endp
+timeSetEvent_wrapper proc
+	jmp mProcs[140*4]
+timeSetEvent_wrapper endp
+waveInAddBuffer_wrapper proc
+	jmp mProcs[141*4]
+waveInAddBuffer_wrapper endp
+waveInClose_wrapper proc
+	jmp mProcs[142*4]
+waveInClose_wrapper endp
+waveInGetDevCapsA_wrapper proc
+	jmp mProcs[143*4]
+waveInGetDevCapsA_wrapper endp
+waveInGetDevCapsW_wrapper proc
+	jmp mProcs[144*4]
+waveInGetDevCapsW_wrapper endp
+waveInGetErrorTextA_wrapper proc
+	jmp mProcs[145*4]
+waveInGetErrorTextA_wrapper endp
+waveInGetErrorTextW_wrapper proc
+	jmp mProcs[146*4]
+waveInGetErrorTextW_wrapper endp
+waveInGetID_wrapper proc
+	jmp mProcs[147*4]
+waveInGetID_wrapper endp
+waveInGetNumDevs_wrapper proc
+	jmp mProcs[148*4]
+waveInGetNumDevs_wrapper endp
+waveInGetPosition_wrapper proc
+	jmp mProcs[149*4]
+waveInGetPosition_wrapper endp
+waveInMessage_wrapper proc
+	jmp mProcs[150*4]
+waveInMessage_wrapper endp
+waveInOpen_wrapper proc
+	jmp mProcs[151*4]
+waveInOpen_wrapper endp
+waveInPrepareHeader_wrapper proc
+	jmp mProcs[152*4]
+waveInPrepareHeader_wrapper endp
+waveInReset_wrapper proc
+	jmp mProcs[153*4]
+waveInReset_wrapper endp
+waveInStart_wrapper proc
+	jmp mProcs[154*4]
+waveInStart_wrapper endp
+waveInStop_wrapper proc
+	jmp mProcs[155*4]
+waveInStop_wrapper endp
+waveInUnprepareHeader_wrapper proc
+	jmp mProcs[156*4]
+waveInUnprepareHeader_wrapper endp
+waveOutBreakLoop_wrapper proc
+	jmp mProcs[157*4]
+waveOutBreakLoop_wrapper endp
+waveOutClose_wrapper proc
+	jmp mProcs[158*4]
+waveOutClose_wrapper endp
+waveOutGetDevCapsA_wrapper proc
+	jmp mProcs[159*4]
+waveOutGetDevCapsA_wrapper endp
+waveOutGetDevCapsW_wrapper proc
+	jmp mProcs[160*4]
+waveOutGetDevCapsW_wrapper endp
+waveOutGetErrorTextA_wrapper proc
+	jmp mProcs[161*4]
+waveOutGetErrorTextA_wrapper endp
+waveOutGetErrorTextW_wrapper proc
+	jmp mProcs[162*4]
+waveOutGetErrorTextW_wrapper endp
+waveOutGetID_wrapper proc
+	jmp mProcs[163*4]
+waveOutGetID_wrapper endp
+waveOutGetNumDevs_wrapper proc
+	jmp mProcs[164*4]
+waveOutGetNumDevs_wrapper endp
+waveOutGetPitch_wrapper proc
+	jmp mProcs[165*4]
+waveOutGetPitch_wrapper endp
+waveOutGetPlaybackRate_wrapper proc
+	jmp mProcs[166*4]
+waveOutGetPlaybackRate_wrapper endp
+waveOutGetPosition_wrapper proc
+	jmp mProcs[167*4]
+waveOutGetPosition_wrapper endp
+waveOutGetVolume_wrapper proc
+	jmp mProcs[168*4]
+waveOutGetVolume_wrapper endp
+waveOutMessage_wrapper proc
+	jmp mProcs[169*4]
+waveOutMessage_wrapper endp
+waveOutOpen_wrapper proc
+	jmp mProcs[170*4]
+waveOutOpen_wrapper endp
+waveOutPause_wrapper proc
+	jmp mProcs[171*4]
+waveOutPause_wrapper endp
+waveOutPrepareHeader_wrapper proc
+	jmp mProcs[172*4]
+waveOutPrepareHeader_wrapper endp
+waveOutReset_wrapper proc
+	jmp mProcs[173*4]
+waveOutReset_wrapper endp
+waveOutRestart_wrapper proc
+	jmp mProcs[174*4]
+waveOutRestart_wrapper endp
+waveOutSetPitch_wrapper proc
+	jmp mProcs[175*4]
+waveOutSetPitch_wrapper endp
+waveOutSetPlaybackRate_wrapper proc
+	jmp mProcs[176*4]
+waveOutSetPlaybackRate_wrapper endp
+waveOutSetVolume_wrapper proc
+	jmp mProcs[177*4]
+waveOutSetVolume_wrapper endp
+waveOutUnprepareHeader_wrapper proc
+	jmp mProcs[178*4]
+waveOutUnprepareHeader_wrapper endp
+waveOutWrite_wrapper proc
+	jmp mProcs[179*4]
+waveOutWrite_wrapper endp
+end

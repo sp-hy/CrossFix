@@ -1,19 +1,19 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 
 
-// If using a proxy build config, include the necessary code to proxy calls to version.dll
+// If using a proxy build config, include the necessary code to proxy calls to winmm.dll
 #ifdef PROXY
-    #include "version/version.h"
+    #include "winmm/winmm.h"
 #else
     #include <Windows.h>
 #endif
 
 #include <iostream>
+#include "patches/widescreen.h"
 
 
 // Get handle from the injected process
 HANDLE aoe_handle = GetCurrentProcess();
-
 
 // Spawn thread to do work
 DWORD WINAPI MainThread(LPVOID param) {
@@ -27,6 +27,11 @@ DWORD WINAPI MainThread(LPVOID param) {
 
 	// Log a message
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
+
+	// Apply widescreen patch
+	if (!ApplyWidescreenPatch(base)) {
+		std::cout << "Failed to apply widescreen patch!" << std::endl;
+	}
 
 	// Run thread loop until END key is pressed
 	while (!GetAsyncKeyState(VK_END)) {
