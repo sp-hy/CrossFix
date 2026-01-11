@@ -97,6 +97,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="patches\widescreen.cpp" />
     <ClCompile Include="patches\fps.cpp" />
+    <ClCompile Include="patches\pausefix.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
   </ItemGroup>
@@ -109,6 +110,7 @@
     <ClInclude Include="winmm\winmm.h" />
     <ClInclude Include="patches\widescreen.h" />
     <ClInclude Include="patches\fps.h" />
+    <ClInclude Include="patches\pausefix.h" />
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
   </ItemGroup>

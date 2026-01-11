@@ -12,7 +12,9 @@ parasite/
 │   ├── widescreen.cpp       # Widescreen fix implementation
 │   ├── widescreen.h
 │   ├── fps.cpp              # FPS unlock implementation
-│   └── fps.h
+│   ├── fps.h
+│   ├── pausefix.cpp         # Disable pause on focus loss
+│   └── pausefix.h
 ├── utils/                   # Utility functions
 │   ├── memory.cpp           # Memory patching utilities
 │   ├── memory.h
@@ -43,6 +45,11 @@ widescreen_mode=0
 # Enable or disable the double FPS mode
 # 0 = disabled (30 FPS), 1 = enabled (60 FPS)
 double_fps_mode=0
+
+# Disable pause when window loses focus
+# 0 = game pauses when window is inactive (default behavior)
+# 1 = game continues running when window is inactive
+disable_pause_on_focus_loss=1
 ```
 
 Comments are supported using the `#` character.
@@ -138,6 +145,15 @@ When enabled, the patch writes the 4-byte value `0x0000200D` to both addresses, 
 
 **Note:** This patch may affect game speed and physics. Test thoroughly to ensure gameplay remains stable.
 
+### Disable Pause on Focus Loss Patch
+
+This patch prevents the game from pausing when the window loses focus, allowing it to continue running in the background:
+- `CHRONOCROSS.exe+184096`
+
+When enabled, the patch changes the conditional jump instruction from `JNE` (Jump if Not Equal, `0F 85`) to `JE` (Jump if Equal, `0F 84`). This inverts the focus check logic, making the game continue running even when the window is inactive.
+
+**Use case:** Useful for streaming, recording, or multitasking while the game runs in the background.
+
 ## Adding More Patches
 
 To add a new patch:
@@ -175,3 +191,4 @@ Press the **END** key to unload the DLL (console will remain until game exit).
 - The DLL must be named `winmm.dll` to work as a proxy
 - Back up the original game files before using
 - If `settings.ini` is not found, defaults will be used (widescreen enabled, 16:9 mode)
+- **Safety:** The DLL verifies it's running in `CHRONOCROSS.exe` before applying patches. If loaded by other executables in the game directory, it will exit gracefully without applying any modifications.

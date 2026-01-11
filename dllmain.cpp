@@ -9,8 +9,12 @@
 #endif
 
 #include <iostream>
+#include <string>
+#include <algorithm>
+#include <cctype>
 #include "patches/widescreen.h"
 #include "patches/fps.h"
+#include "patches/pausefix.h"
 #include "utils/settings.h"
 
 
@@ -22,13 +26,43 @@ DWORD WINAPI MainThread(LPVOID param) {
     // Get base address from the injected process
 	uintptr_t base = (uintptr_t)GetModuleHandle(NULL);
 
-	// Allocate a console
+	// Verify we're running in CHRONOCROSS.exe
+	char exePath[MAX_PATH];
+	if (GetModuleFileNameA(NULL, exePath, MAX_PATH) == 0) {
+		// Could not get executable name, exit silently
+		FreeLibraryAndExitThread((HMODULE)param, 0);
+		return 0;
+	}
+
+	// Extract just the executable name from the full path
+	char* exeName = strrchr(exePath, '\\');
+	if (exeName == NULL) {
+		exeName = exePath; // No path separator found, use the whole string
+	} else {
+		exeName++; // Skip the backslash
+	}
+
+	// Convert to lowercase for case-insensitive comparison
+	std::string exeNameLower(exeName);
+	std::transform(exeNameLower.begin(), exeNameLower.end(), exeNameLower.begin(), ::tolower);
+
+	// Check if we're running in CHRONOCROSS.exe
+	if (exeNameLower != "chronocross.exe") {
+		// Not the target executable, exit silently without showing console
+		FreeLibraryAndExitThread((HMODULE)param, 0);
+		return 0;
+	}
+
+	// We're in CHRONOCROSS.exe - allocate a console and show status
 	AllocConsole();
 	FILE* f;
 	freopen_s(&f, "CONOUT$", "w", stdout);
 
 	// Log a message
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
+	std::cout << "Executable: " << exeName << std::endl;
+	std::cout << "Confirmed: Running in CHRONOCROSS.exe" << std::endl;
+	std::cout << std::endl;
 
 	// Load settings from INI file
 	Settings settings;
@@ -69,6 +103,18 @@ DWORD WINAPI MainThread(LPVOID param) {
 		std::cout << "Double FPS mode disabled in settings" << std::endl;
 	}
 
+	// Check if disable pause on focus loss is enabled
+	bool disablePauseEnabled = settings.GetBool("disable_pause_on_focus_loss", false);
+	
+	if (disablePauseEnabled) {
+		// Apply disable pause patch
+		if (!ApplyDisablePausePatch(base)) {
+			std::cout << "Failed to apply disable pause patch!" << std::endl;
+		}
+	} else {
+		std::cout << "Disable pause on focus loss disabled in settings" << std::endl;
+	}
+
 	// Run thread loop until END key is pressed
 	while (!GetAsyncKeyState(VK_END)) {
 		// Main thread loop
@@ -85,7 +131,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 		PostMessage(consoleWindow, WM_CLOSE, 0, 0);
 	}
 
-	FreeConsole();
 	FreeLibraryAndExitThread((HMODULE)param, 0);
 	return 0;
 }
@@ -111,10 +156,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
 	case DLL_PROCESS_DETACH:
-		// Close the console when the DLL is detached
-		if (ul_reason_for_call == DLL_PROCESS_DETACH) {
-			FreeConsole();
-		}
 		break;
 	}
 	return TRUE;
