@@ -1,6 +1,6 @@
 # Chrono Cross Widescreen Fix - Proxy DLL
 
-This project provides a `winmm.dll` proxy DLL that patches the PC version of Chrono Cross to support widescreen resolutions.
+This project provides a `winmm.dll` proxy DLL that patches the PC version of Chrono Cross to support widescreen resolutions and enhanced frame rates.
 
 ## Project Structure
 
@@ -10,7 +10,9 @@ parasite/
 ├── settings.ini             # Configuration file
 ├── patches/                 # Game patches
 │   ├── widescreen.cpp       # Widescreen fix implementation
-│   └── widescreen.h
+│   ├── widescreen.h
+│   ├── fps.cpp              # FPS unlock implementation
+│   └── fps.h
 ├── utils/                   # Utility functions
 │   ├── memory.cpp           # Memory patching utilities
 │   ├── memory.h
@@ -37,6 +39,10 @@ widescreen_enabled=1
 # 1 = 21:9 (ultrawide)
 # 2 = 32:9 (super ultrawide)
 widescreen_mode=0
+
+# Enable or disable the double FPS mode
+# 0 = disabled (30 FPS), 1 = enabled (60 FPS)
+double_fps_mode=0
 ```
 
 Comments are supported using the `#` character.
@@ -121,6 +127,16 @@ pop edx
 pop eax
 ; ... then original code
 ```
+
+### Double FPS Patch
+
+The double FPS patch unlocks the game's frame rate from 30 FPS to 60 FPS by modifying timing-related values at two locations:
+- `CHRONOCROSS.exe+188A6D`
+- `CHRONOCROSS.exe+18557E`
+
+When enabled, the patch writes the 4-byte value `0x0000200D` to both addresses, which adjusts the game's internal frame timing to run at 60 FPS instead of the default 30 FPS.
+
+**Note:** This patch may affect game speed and physics. Test thoroughly to ensure gameplay remains stable.
 
 ## Adding More Patches
 

@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include "patches/widescreen.h"
+#include "patches/fps.h"
 #include "utils/settings.h"
 
 
@@ -54,6 +55,18 @@ DWORD WINAPI MainThread(LPVOID param) {
 		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
+	}
+
+	// Check if double FPS mode is enabled
+	bool doubleFpsEnabled = settings.GetBool("double_fps_mode", false);
+	
+	if (doubleFpsEnabled) {
+		// Apply double FPS patch
+		if (!ApplyDoubleFpsPatch(base)) {
+			std::cout << "Failed to apply double FPS patch!" << std::endl;
+		}
+	} else {
+		std::cout << "Double FPS mode disabled in settings" << std::endl;
 	}
 
 	// Run thread loop until END key is pressed
