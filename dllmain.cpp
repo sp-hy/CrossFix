@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include "patches/widescreen.h"
+#include "utils/settings.h"
 
 
 // Get handle from the injected process
@@ -28,9 +29,31 @@ DWORD WINAPI MainThread(LPVOID param) {
 	// Log a message
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
 
-	// Apply widescreen patch
-	if (!ApplyWidescreenPatch(base)) {
-		std::cout << "Failed to apply widescreen patch!" << std::endl;
+	// Load settings from INI file
+	Settings settings;
+	if (!settings.Load("settings.ini")) {
+		std::cout << "Warning: Could not load settings.ini, using defaults" << std::endl;
+	}
+
+	// Check if widescreen is enabled
+	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
+	int widescreenModeInt = settings.GetInt("widescreen_mode", 0);
+
+	if (widescreenEnabled) {
+		// Validate and convert widescreen mode
+		WidescreenMode mode = WIDESCREEN_16_9;
+		if (widescreenModeInt >= 0 && widescreenModeInt <= 2) {
+			mode = static_cast<WidescreenMode>(widescreenModeInt);
+		} else {
+			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), defaulting to 16:9" << std::endl;
+		}
+
+		// Apply widescreen patch with selected mode
+		if (!ApplyWidescreenPatch(base, mode)) {
+			std::cout << "Failed to apply widescreen patch!" << std::endl;
+		}
+	} else {
+		std::cout << "Widescreen patch disabled in settings" << std::endl;
 	}
 
 	// Run thread loop until END key is pressed

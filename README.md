@@ -7,18 +7,39 @@ This project provides a `winmm.dll` proxy DLL that patches the PC version of Chr
 ```
 parasite/
 ├── dllmain.cpp              # Main entry point
+├── settings.ini             # Configuration file
 ├── patches/                 # Game patches
 │   ├── widescreen.cpp       # Widescreen fix implementation
 │   └── widescreen.h
 ├── utils/                   # Utility functions
 │   ├── memory.cpp           # Memory patching utilities
-│   └── memory.h
+│   ├── memory.h
+│   ├── settings.cpp         # INI file parser
+│   └── settings.h
 └── winmm/                   # winmm.dll proxy implementation
     ├── winmm.h              # Proxy header
     ├── winmm.def            # Export definitions
     └── 32/
         └── winmm_32.asm     # 32-bit assembly wrappers
 ```
+
+## Configuration
+
+The DLL can be configured via `settings.ini` in the game directory:
+
+```ini
+# Enable or disable the widescreen patch
+# 0 = disabled, 1 = enabled
+widescreen_enabled=1
+
+# Widescreen aspect ratio mode
+# 0 = 16:9 (standard widescreen)
+# 1 = 21:9 (ultrawide)
+# 2 = 32:9 (super ultrawide)
+widescreen_mode=0
+```
+
+Comments are supported using the `#` character.
 
 ## Building
 
@@ -32,8 +53,10 @@ parasite/
 ## Installation
 
 1. Copy the compiled `winmm.dll` to the Chrono Cross game directory (where `CHRONOCROSS.exe` is located)
-2. Launch the game normally
-3. The widescreen patch will be applied automatically
+2. Copy `settings.ini` to the same directory
+3. Adjust settings in `settings.ini` as desired
+4. Launch the game normally
+5. The widescreen patch will be applied automatically based on your settings
 
 ## How It Works
 
@@ -41,58 +64,63 @@ parasite/
 The DLL acts as a proxy for `winmm.dll`, forwarding all Windows Multimedia API calls to the real system `winmm.dll` while allowing our code to run in the game's process.
 
 ### Widescreen Patch
-The widescreen fix dynamically adjusts based on the current resolution by reading:
-- Width: `CHRONOCROSS.exe+E2F3E0`
-- Height: `CHRONOCROSS.exe+E2F3E4`
 
-It modifies two locations in the game code that handle horizontal offset calculations:
+The widescreen fix modifies two locations in the game code that handle horizontal offset calculations:
 - `CHRONOCROSS.exe+18EE7B`
 - `CHRONOCROSS.exe+18AD25`
 
-Original code:
+Original code (8 bytes):
 ```asm
-mov eax,[esi+60]
-cdq
-add edi,eax
-adc ecx,edx
+mov eax,[esi+60]  ; 8B 46 60
+cdq               ; 99
+add edi,eax       ; 03 F8
+adc ecx,edx       ; 13 CA
 ```
 
-Modified code dynamically calculates aspect ratio correction:
+The patch replaces these with a call to a hook function that adjusts the coordinate based on the selected aspect ratio:
+
+#### 16:9 Mode (multiply by 3/4)
+```asm
+push eax
+push edx
+mov eax, edi
+imul eax, eax, 3
+sar eax, 2           ; divide by 4
+mov edi, eax
+pop edx
+pop eax
+; ... then original code
+```
+
+#### 21:9 Mode (multiply by 4/7)
 ```asm
 push eax
 push edx
 push ebx
-push ecx
-
-// Read resolution from memory
-mov ebx, [g_resX]
-mov eax, [ebx]        ; eax = width
-mov ebx, [g_resY]
-mov ebx, [ebx]        ; ebx = height
-
-// Calculate: edi * (height*4) / (width*3)
-imul ebx, 4           ; ebx = height * 4
-imul eax, 3           ; eax = width * 3
-mov ecx, eax
 mov eax, edi
-imul eax, ebx
+imul eax, eax, 4
+mov ebx, 7
 cdq
-idiv ecx              ; eax = adjusted value
+idiv ebx
 mov edi, eax
-
-pop ecx
 pop ebx
 pop edx
 pop eax
-
 ; ... then original code
 ```
 
-This approach automatically supports any aspect ratio:
-- **16:9** (1920x1080, 2560x1440, etc.)
-- **21:9** (2560x1080, 3440x1440, etc.)
-- **32:9** (3840x1080, 5120x1440, etc.)
-- Any custom resolution
+#### 32:9 Mode (multiply by 3/8)
+```asm
+push eax
+push edx
+mov eax, edi
+imul eax, eax, 3
+sar eax, 3           ; divide by 8
+mov edi, eax
+pop edx
+pop eax
+; ... then original code
+```
 
 ## Adding More Patches
 
@@ -119,6 +147,7 @@ if (!ApplyFrameratePatch(base)) {
 
 The DLL opens a console window that shows:
 - Base address of the game
+- Current settings loaded from INI
 - Patch application status
 - Any errors that occur
 
@@ -129,3 +158,4 @@ Press the **END** key to unload the DLL (console will remain until game exit).
 - This is a 32-bit DLL for the 32-bit PC version of Chrono Cross
 - The DLL must be named `winmm.dll` to work as a proxy
 - Back up the original game files before using
+- If `settings.ini` is not found, defaults will be used (widescreen enabled, 16:9 mode)

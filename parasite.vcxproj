@@ -97,6 +97,7 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="patches\widescreen.cpp" />
     <ClCompile Include="utils\memory.cpp" />
+    <ClCompile Include="utils\settings.cpp" />
   </ItemGroup>
   <ItemGroup>
     <MASM Include="winmm\32\winmm_32.asm" />
@@ -107,6 +108,7 @@
     <ClInclude Include="winmm\winmm.h" />
     <ClInclude Include="patches\widescreen.h" />
     <ClInclude Include="utils\memory.h" />
+    <ClInclude Include="utils\settings.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
