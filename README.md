@@ -42,3 +42,4 @@ disable_pause_on_focus_loss=1
 - Back up your game files before using
 - The widescreen fix requires the in-game setting **ScreenType: Full**
 - For 60 FPS, enable the in-game slowdown mode (press F1)
+- Widescreen 2D textures are WIP, so the backdrops are currently disconnected from the characters.
