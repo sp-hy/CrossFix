@@ -19,21 +19,27 @@ Fixes and enhancements for the PC version of Chrono Cross.
 Edit `settings.ini` to configure the fixes:
 
 ```ini
-# Widescreen patch
-# Set in-game ScreenType to "Full"
-# Note: 2D backdrops currently not working
+# Enable or disable the widescreen patch
+# Must be used with the setting ScreenType: Full
+# 2D backdrops currently not working & will look weird
+# 0 = disabled, 1 = enabled
 widescreen_enabled=1
 
-# Aspect ratio
-# 0 = 16:9, 1 = 21:9, 2 = 32:9
+# Widescreen aspect ratio mode
+# 0 = 16:9 (standard widescreen)
+# 1 = 21:9 (ultrawide)
+# 2 = 32:9 (super ultrawide)
 widescreen_mode=0
 
-# 60 FPS mode
-# Use with in-game slowdown mode (F1)
-# Disable if using SpecialK or similar tools
+# Enable or disable the double FPS mode
+# Should be used with the slowdown mode (Press F1 in game), Should provide a smooth 60 everywhere
+# Disable if you use another tool like SpecialK
+# 0 = disabled (30 field/60 battle FPS), 1 = enabled (60 FPS everywhere)
 double_fps_mode=0
 
-# Prevent pause when tabbed out
+# Disable pause when window loses focus
+# 0 = game pauses when window is inactive (default behavior)
+# 1 = game & music continue running when window is inactive
 disable_pause_on_focus_loss=1
 ```
 
