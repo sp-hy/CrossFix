@@ -52,8 +52,6 @@ double_fps_mode=0
 disable_pause_on_focus_loss=1
 ```
 
-Comments are supported using the `#` character.
-
 ## Building
 
 1. Open `crossfix.sln` in Visual Studio
