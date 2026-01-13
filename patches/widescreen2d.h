@@ -31,6 +31,9 @@ typedef HRESULT(WINAPI* D3D11CreateDeviceAndSwapChain_t)(
     ID3D11DeviceContext** ppImmediateContext
 );
 
+// Hook the D3D11 device methods
+bool HookD3D11Device(ID3D11Device* pDevice);
+
 // Hook the D3D11 device context methods
 bool HookD3D11Context(ID3D11DeviceContext* pContext);
 

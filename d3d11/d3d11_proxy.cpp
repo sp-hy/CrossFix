@@ -60,9 +60,10 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, ppDevice, pFeatureLevel, ppImmediateContext);
         
-        if (SUCCEEDED(hr) && ppImmediateContext && *ppImmediateContext) {
-            std::cout << "[PROXY] Intercepted D3D11CreateDevice! Hooking context..." << std::endl;
-            HookD3D11Context(*ppImmediateContext);
+        if (SUCCEEDED(hr)) {
+            if (ppDevice && *ppDevice) HookD3D11Device(*ppDevice);
+            if (ppImmediateContext && *ppImmediateContext) HookD3D11Context(*ppImmediateContext);
+            std::cout << "[PROXY] D3D11CreateDevice hooks applied." << std::endl;
         }
         return hr;
     }
@@ -86,9 +87,10 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
         
-        if (SUCCEEDED(hr) && ppImmediateContext && *ppImmediateContext) {
-            std::cout << "[PROXY] Intercepted D3D11CreateDeviceAndSwapChain! Hooking context..." << std::endl;
-            HookD3D11Context(*ppImmediateContext);
+        if (SUCCEEDED(hr)) {
+            if (ppDevice && *ppDevice) HookD3D11Device(*ppDevice);
+            if (ppImmediateContext && *ppImmediateContext) HookD3D11Context(*ppImmediateContext);
+            std::cout << "[PROXY] D3D11CreateDeviceAndSwapChain hooks applied." << std::endl;
         }
         return hr;
     }
