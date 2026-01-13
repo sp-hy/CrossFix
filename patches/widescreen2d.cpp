@@ -8,84 +8,123 @@ static bool g_widescreen2DEnabled = false;
 static float g_widescreenRatio = 0.75f; 
 static std::mutex g_hookMutex;
 
-// x86 surgical VTable Indices
+// Custom GUID for tagging background textures
+static const GUID GUID_CrossFix_Tag = { 0x7a5c2b1e, 0x9f0e, 0x4c3d, { 0x8a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x6a, 0x7c } };
+
+struct TexMetadata {
+    UINT width;
+    UINT height;
+    void* lastMappedData;
+    UINT lastMappedPitch;
+};
+
 const int DEVICE_CREATE_TEXTURE2D = 5;
+const int CONTEXT_MAP = 14;
+const int CONTEXT_UNMAP = 15;
 const int CONTEXT_UPDATE_SUBRESOURCE = 42;
 
 typedef HRESULT (STDMETHODCALLTYPE* CreateTexture2D_t)(ID3D11Device*, const D3D11_TEXTURE2D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture2D**);
 typedef void (STDMETHODCALLTYPE* UpdateSubresource_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, const D3D11_BOX*, const void*, UINT, UINT);
+typedef HRESULT (STDMETHODCALLTYPE* Map_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, D3D11_MAP, UINT, D3D11_MAPPED_SUBRESOURCE*);
+typedef void (STDMETHODCALLTYPE* Unmap_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT);
 
 static CreateTexture2D_t g_originalCreateTexture2D = nullptr;
 static UpdateSubresource_t g_originalUpdateSubresource = nullptr;
+static Map_t g_originalMap = nullptr;
+static Unmap_t g_originalUnmap = nullptr;
 
-bool GetTextureDimensions(ID3D11Resource* pResource, UINT* pWidth, UINT* pHeight, UINT* pBindFlags) {
-    if (!pResource) return false;
-    D3D11_RESOURCE_DIMENSION dim;
-    pResource->GetType(&dim);
-    if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return false;
-    ID3D11Texture2D* pTex = nullptr;
-    if (SUCCEEDED(pResource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&pTex))) {
-        D3D11_TEXTURE2D_DESC desc;
-        pTex->GetDesc(&desc);
-        *pWidth = desc.Width;
-        *pHeight = desc.Height;
-        if (pBindFlags) *pBindFlags = desc.BindFlags;
-        pTex->Release();
-        return true;
-    }
-    return false;
-}
+static thread_local std::vector<BYTE> tl_rowBuffer;
+static thread_local std::vector<BYTE> tl_fullBuffer;
 
-std::vector<BYTE> TransformImageForWidescreen(const void* pSrcData, UINT width, UINT height, UINT srcRowPitch, float compressionRatio, UINT* pNewRowPitch) {
-    if (!pSrcData) return std::vector<BYTE>();
-    UINT newWidth = (UINT)(width * compressionRatio);
+void TransformInPlace(void* pData, UINT width, UINT height, UINT rowPitch, float ratio) {
+    if (!pData || rowPitch < width * 4) return;
+    if (tl_rowBuffer.size() < rowPitch) tl_rowBuffer.resize(rowPitch);
+    UINT newWidth = (UINT)(width * ratio);
     if (newWidth % 2 != 0) newWidth++; 
-    UINT paddingLeft = (width - newWidth) / 2;
-    if (paddingLeft % 2 != 0) paddingLeft++;
-    *pNewRowPitch = srcRowPitch;
-    std::vector<BYTE> newData(height * srcRowPitch, 0); 
-    BYTE* pDst = newData.data();
-    const BYTE* pSrc = (const BYTE*)pSrcData;
+    UINT pad = (width - newWidth) / 2;
+    if (pad % 2 != 0) pad++;
+    BYTE* pPixels = (BYTE*)pData;
     for (UINT y = 0; y < height; ++y) {
-        const BYTE* pSrcLine = pSrc + (y * srcRowPitch);
-        BYTE* pDstLine = pDst + (y * srcRowPitch);
+        BYTE* pLine = pPixels + (y * rowPitch);
+        memcpy(tl_rowBuffer.data(), pLine, rowPitch);
+        memset(pLine, 0, rowPitch);
         for (UINT x = 0; x < newWidth; ++x) {
-            float srcX = (float)x / compressionRatio;
-            UINT iSrcX = (UINT)srcX;
-            if (iSrcX >= width) iSrcX = width - 1;
-            UINT dstXPos = paddingLeft + x;
-            if (dstXPos < width) memcpy(pDstLine + (dstXPos * 4), pSrcLine + (iSrcX * 4), 4);
+            UINT iSX = (UINT)((float)x / ratio);
+            if (iSX < width && (pad + x) < width) memcpy(pLine + (pad + x) * 4, tl_rowBuffer.data() + iSX * 4, 4);
         }
     }
-    return newData;
 }
 
 HRESULT STDMETHODCALLTYPE HookedCreateTexture2D(ID3D11Device* This, const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) {
+    const D3D11_SUBRESOURCE_DATA* pDataToUse = pInitialData;
+    std::vector<BYTE> transformed;
+
     if (g_widescreen2DEnabled && pDesc && pInitialData && pInitialData->pSysMem && pDesc->Width >= 800 && pDesc->Width > pDesc->Height) {
         if (!(pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) && (pInitialData->SysMemPitch / pDesc->Width) == 4) {
-             std::cout << "[D3D11] Transforming backdrop: " << pDesc->Width << "x" << pDesc->Height << std::endl;
-             UINT newPitch;
-             std::vector<BYTE> transformed = TransformImageForWidescreen(pInitialData->pSysMem, pDesc->Width, pDesc->Height, pInitialData->SysMemPitch, g_widescreenRatio, &newPitch);
-             D3D11_SUBRESOURCE_DATA newData = *pInitialData;
+             size_t total = (size_t)pDesc->Height * pInitialData->SysMemPitch;
+             transformed.assign(total, 0);
+             memcpy(transformed.data(), pInitialData->pSysMem, total);
+             TransformInPlace(transformed.data(), pDesc->Width, pDesc->Height, pInitialData->SysMemPitch, g_widescreenRatio);
+             
+             static D3D11_SUBRESOURCE_DATA newData;
+             newData = *pInitialData;
              newData.pSysMem = transformed.data();
-             newData.SysMemPitch = newPitch;
-             return g_originalCreateTexture2D(This, pDesc, &newData, ppTexture2D);
+             pDataToUse = &newData;
         }
     }
-    return g_originalCreateTexture2D(This, pDesc, pInitialData, ppTexture2D);
+
+    HRESULT hr = g_originalCreateTexture2D(This, pDesc, pDataToUse, ppTexture2D);
+    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && pDesc && pDesc->Width >= 800) {
+        TexMetadata meta = { pDesc->Width, pDesc->Height, nullptr, 0 };
+        (*ppTexture2D)->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
+    }
+    return hr;
 }
 
-void STDMETHODCALLTYPE HookedUpdateSubresource(ID3D11DeviceContext* This, ID3D11Resource* pDstResource, UINT DstSubresource, const D3D11_BOX* pDstBox, const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch) {
-    UINT w, h, b;
-    if (g_widescreen2DEnabled && pDstResource && pSrcData && !pDstBox && GetTextureDimensions(pDstResource, &w, &h, &b) && w >= 800 && w > h) {
-        if (!(b & D3D11_BIND_RENDER_TARGET) && (SrcRowPitch / w) == 4) {
-            UINT newPitch;
-            std::vector<BYTE> transformed = TransformImageForWidescreen(pSrcData, w, h, SrcRowPitch, g_widescreenRatio, &newPitch);
-            g_originalUpdateSubresource(This, pDstResource, DstSubresource, pDstBox, transformed.data(), newPitch, SrcDepthPitch);
-            return;
+void STDMETHODCALLTYPE HookedUpdateSubresource(ID3D11DeviceContext* This, ID3D11Resource* pDst, UINT Sub, const D3D11_BOX* pBox, const void* pSrc, UINT Pitch, UINT Depth) {
+    if (g_widescreen2DEnabled && pSrc && !pBox) {
+        D3D11_RESOURCE_DIMENSION dim;
+        pDst->GetType(&dim);
+        if (dim == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+            UINT w, h, b;
+            ID3D11Texture2D* pTex = (ID3D11Texture2D*)pDst; // Unsafe but fast, we checked dim
+            D3D11_TEXTURE2D_DESC desc;
+            pTex->GetDesc(&desc);
+            if (desc.Width >= 800 && desc.Width > desc.Height && !(desc.BindFlags & D3D11_BIND_RENDER_TARGET) && (Pitch / desc.Width) == 4) {
+                if (tl_fullBuffer.size() < (size_t)desc.Height * Pitch) tl_fullBuffer.resize((size_t)desc.Height * Pitch);
+                memcpy(tl_fullBuffer.data(), pSrc, (size_t)desc.Height * Pitch);
+                TransformInPlace(tl_fullBuffer.data(), desc.Width, desc.Height, Pitch, g_widescreenRatio);
+                g_originalUpdateSubresource(This, pDst, Sub, pBox, tl_fullBuffer.data(), Pitch, Depth);
+                return;
+            }
         }
     }
-    g_originalUpdateSubresource(This, pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch);
+    g_originalUpdateSubresource(This, pDst, Sub, pBox, pSrc, Pitch, Depth);
+}
+
+HRESULT STDMETHODCALLTYPE HookedMap(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Sub, D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE* pMapped) {
+    HRESULT hr = g_originalMap(This, pResource, Sub, type, flags, pMapped);
+    if (SUCCEEDED(hr) && pMapped && pMapped->pData && type == D3D11_MAP_WRITE_DISCARD) {
+        UINT size = sizeof(TexMetadata);
+        TexMetadata meta;
+        if (SUCCEEDED(pResource->GetPrivateData(GUID_CrossFix_Tag, &size, &meta))) {
+            meta.lastMappedData = pMapped->pData;
+            meta.lastMappedPitch = pMapped->RowPitch;
+            pResource->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
+        }
+    }
+    return hr;
+}
+
+void STDMETHODCALLTYPE HookedUnmap(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Sub) {
+    UINT size = sizeof(TexMetadata);
+    TexMetadata meta;
+    if (g_widescreen2DEnabled && SUCCEEDED(pResource->GetPrivateData(GUID_CrossFix_Tag, &size, &meta)) && meta.lastMappedData) {
+        TransformInPlace(meta.lastMappedData, meta.width, meta.height, meta.lastMappedPitch, g_widescreenRatio);
+        meta.lastMappedData = nullptr;
+        pResource->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
+    }
+    g_originalUnmap(This, pResource, Sub);
 }
 
 bool HookD3D11Device(ID3D11Device* pDevice) {
@@ -95,10 +134,10 @@ bool HookD3D11Device(ID3D11Device* pDevice) {
     if (vtable[DEVICE_CREATE_TEXTURE2D] == (void*)HookedCreateTexture2D) return true;
     g_originalCreateTexture2D = (CreateTexture2D_t)vtable[DEVICE_CREATE_TEXTURE2D];
     DWORD old;
-    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, PAGE_EXECUTE_READWRITE, &old);
     vtable[DEVICE_CREATE_TEXTURE2D] = (void*)HookedCreateTexture2D;
-    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], sizeof(void*), old, &old);
-    std::cout << "[D3D11 Hook] ID3D11Device hooked" << std::endl;
+    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, old, &old);
+    std::cout << "[D3D11 Hook] Device Hooked" << std::endl;
     return true;
 }
 
@@ -106,13 +145,19 @@ bool HookD3D11Context(ID3D11DeviceContext* pContext) {
     if (!pContext) return false;
     std::lock_guard<std::mutex> lock(g_hookMutex);
     void** vtable = *(void***)pContext;
-    if (vtable[CONTEXT_UPDATE_SUBRESOURCE] == (void*)HookedUpdateSubresource) return true;
+    if (vtable[CONTEXT_MAP] == (void*)HookedMap) return true;
+    g_originalMap = (Map_t)vtable[CONTEXT_MAP];
+    g_originalUnmap = (Unmap_t)vtable[CONTEXT_UNMAP];
     g_originalUpdateSubresource = (UpdateSubresource_t)vtable[CONTEXT_UPDATE_SUBRESOURCE];
     DWORD old;
-    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    VirtualProtect(&vtable[CONTEXT_MAP], 8, PAGE_EXECUTE_READWRITE, &old);
+    vtable[CONTEXT_MAP] = (void*)HookedMap;
+    vtable[CONTEXT_UNMAP] = (void*)HookedUnmap;
+    VirtualProtect(&vtable[CONTEXT_MAP], 8, old, &old);
+    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, PAGE_EXECUTE_READWRITE, &old);
     vtable[CONTEXT_UPDATE_SUBRESOURCE] = (void*)HookedUpdateSubresource;
-    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], sizeof(void*), old, &old);
-    std::cout << "[D3D11 Hook] ID3D11DeviceContext hooked" << std::endl;
+    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, old, &old);
+    std::cout << "[D3D11 Hook] Context Hooked" << std::endl;
     return true;
 }
 
