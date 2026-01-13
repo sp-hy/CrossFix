@@ -59,7 +59,7 @@ HRESULT STDMETHODCALLTYPE HookedCreateTexture2D(ID3D11Device* This, const D3D11_
     const D3D11_SUBRESOURCE_DATA* pDataToUse = pInitialData;
     std::vector<BYTE> transformed;
 
-    if (g_widescreen2DEnabled && pDesc && pInitialData && pInitialData->pSysMem && pDesc->Width >= 800) {
+    if (g_widescreen2DEnabled && pDesc && pInitialData && pInitialData->pSysMem && pDesc->Width >= 200) {
         // Any aspect ratio, but only Shader Resources (No Render Targets/Depth)
         if (!(pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) && (pInitialData->SysMemPitch / pDesc->Width) == 4) {
              size_t total = (size_t)pDesc->Height * pInitialData->SysMemPitch;
@@ -75,7 +75,7 @@ HRESULT STDMETHODCALLTYPE HookedCreateTexture2D(ID3D11Device* This, const D3D11_
     }
 
     HRESULT hr = g_originalCreateTexture2D(This, pDesc, pDataToUse, ppTexture2D);
-    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && pDesc && pDesc->Width >= 800) {
+    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && pDesc && pDesc->Width >= 200) {
         TexMetadata meta = { pDesc->Width, pDesc->Height, nullptr, 0 };
         (*ppTexture2D)->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
     }
@@ -91,7 +91,7 @@ void STDMETHODCALLTYPE HookedUpdateSubresource(ID3D11DeviceContext* This, ID3D11
             D3D11_TEXTURE2D_DESC desc;
             pTex->GetDesc(&desc);
             // Process anything over 800w, regardless of aspect
-            if (desc.Width >= 800 && !(desc.BindFlags & D3D11_BIND_RENDER_TARGET) && (Pitch / desc.Width) == 4) {
+            if (desc.Width >= 200 && !(desc.BindFlags & D3D11_BIND_RENDER_TARGET) && (Pitch / desc.Width) == 4) {
                 if (tl_fullBuffer.size() < (size_t)desc.Height * Pitch) tl_fullBuffer.resize((size_t)desc.Height * Pitch);
                 memcpy(tl_fullBuffer.data(), pSrc, (size_t)desc.Height * Pitch);
                 TransformInPlace(tl_fullBuffer.data(), desc.Width, desc.Height, Pitch, g_widescreenRatio);
