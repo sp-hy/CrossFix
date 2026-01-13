@@ -57,7 +57,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 	freopen_s(&f, "CONOUT$", "w", stdout);
 
 	// Log a message
-	std::cout << "CrossFix - v0.6 (Full 2D Support)" << std::endl;
+	std::cout << "CrossFix - v0.7 (No Aspect Filter)" << std::endl;
 	std::cout << std::endl;
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
 	std::cout << std::endl;
