@@ -2,17 +2,15 @@
 
 
 // If using a proxy build config, include the necessary code to proxy calls to winmm.dll
-#ifdef PROXY
-    #include "winmm/winmm.h"
-#else
-    #include <Windows.h>
-#endif
+#include <Windows.h>
 
 #include <iostream>
 #include <string>
 #include <algorithm>
 #include <cctype>
 #include "patches/widescreen.h"
+#include "patches/widescreen2d.h"
+#include "d3d11/d3d11_proxy.h"
 #include "patches/fps.h"
 #include "patches/pausefix.h"
 #include "utils/settings.h"
@@ -64,21 +62,29 @@ DWORD WINAPI MainThread(LPVOID param) {
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
 	std::cout << std::endl;
 
-	// Load settings from INI file
+	// Load settings
 	Settings settings;
-	if (!settings.Load("settings.ini")) {
-		std::cout << "Warning: Could not load settings.ini, using defaults" << std::endl;
-	}
+	settings.Load("settings.ini");
+
+	// Initialize D3D11 proxy
+	InitD3D11Proxy();
 
 	// Check if widescreen is enabled
 	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
 	int widescreenModeInt = settings.GetInt("widescreen_mode", 0);
+	bool widescreen2DEnabled = settings.GetBool("widescreen_2d_enabled", true);
 
 	if (widescreenEnabled) {
-		// Validate and convert widescreen mode
+		float ratio2D = 0.75f; 
 		WidescreenMode mode = WIDESCREEN_16_9;
+		
 		if (widescreenModeInt >= 0 && widescreenModeInt <= 2) {
 			mode = static_cast<WidescreenMode>(widescreenModeInt);
+			switch (mode) {
+				case 0: mode = WIDESCREEN_16_9; ratio2D = 0.75f; break;
+				case 1: mode = WIDESCREEN_21_9; ratio2D = 0.571428f; break;
+				case 2: mode = WIDESCREEN_32_9; ratio2D = 0.375f; break;
+			}
 		} else {
 			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), defaulting to 16:9" << std::endl;
 		}
@@ -87,42 +93,38 @@ DWORD WINAPI MainThread(LPVOID param) {
 		if (!ApplyWidescreenPatch(base, mode)) {
 			std::cout << "Failed to apply widescreen patch!" << std::endl;
 		}
+		
+		// Configure 2D widescreen transformation (D3D11 proxy handles the hooking)
+		SetWidescreen2DRatio(ratio2D);
+		SetWidescreen2DEnabled(widescreen2DEnabled);
+		if (widescreen2DEnabled) {
+			std::cout << "2D widescreen transformation configured (waiting for device creation)" << std::endl;
+		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
 	}
 
-	// Check if double FPS mode is enabled
-	bool doubleFpsEnabled = settings.GetBool("double_fps_mode", false);
-	
-	if (doubleFpsEnabled) {
-		// Apply double FPS patch
-		if (!ApplyDoubleFpsPatch(base)) {
-			std::cout << "Failed to apply double FPS patch!" << std::endl;
-		}
-	} else {
-		std::cout << "Double FPS mode disabled in settings" << std::endl;
+	// Apply other patches
+	if (settings.GetBool("double_fps_mode", false)) {
+		if (ApplyDoubleFpsPatch(base)) std::cout << "Double FPS patch applied successfully!" << std::endl;
 	}
 
-	// Check if disable pause on focus loss is enabled
-	bool disablePauseEnabled = settings.GetBool("disable_pause_on_focus_loss", false);
-	
-	if (disablePauseEnabled) {
-		// Apply disable pause patch
-		if (!ApplyDisablePausePatch(base)) {
-			std::cout << "Failed to apply disable pause patch!" << std::endl;
-		}
+	if (settings.GetBool("disable_pause_on_focus_loss", true)) {
+		if (ApplyDisablePausePatch(base)) std::cout << "Disable pause on focus loss patch applied successfully!" << std::endl;
 	} else {
 		std::cout << "Disable pause on focus loss disabled in settings" << std::endl;
 	}
 
 	// Run thread loop until END key is pressed
 	while (!GetAsyncKeyState(VK_END)) {
-		// Main thread loop
-
 		Sleep(1000);
 	}
 
 	std::cout << "Exiting..." << std::endl;
+	
+	// Cleanup D3D11 hooks
+	CleanupD3D11Hooks();
+	
 	Sleep(1000);
 
 	HWND consoleWindow = GetConsoleWindow();
@@ -145,11 +147,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
-		// Handle proxy calls to version.dll, if using a proxy build config
-		#if PROXY
-			setupWrappers();
-		#endif
-
 		// Create thread
 		CreateThread(0, 0, MainThread, hModule, 0, 0);
 		break;

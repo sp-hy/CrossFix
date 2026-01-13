@@ -21,6 +21,9 @@
     <ClCompile Include="patches\widescreen.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="patches\widescreen2d.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="patches\fps.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -45,6 +48,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="patches\widescreen.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="patches\widescreen2d.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="patches\fps.h">

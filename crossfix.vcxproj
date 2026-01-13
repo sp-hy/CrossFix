@@ -45,10 +45,10 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug - Proxy|Win32'">
-    <TargetName>winmm</TargetName>
+    <TargetName>d3d11</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release - Proxy|Win32'">
-    <TargetName>winmm</TargetName>
+    <TargetName>d3d11</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug - Proxy|Win32'">
     <ClCompile>
@@ -66,7 +66,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>winmm\winmm.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>d3d11\d3d11.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release - Proxy|Win32'">
@@ -89,26 +89,28 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>winmm\winmm.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>d3d11\d3d11.def</ModuleDefinitionFile>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="d3d11\d3d11_proxy.cpp" />
     <ClCompile Include="patches\widescreen.cpp" />
+    <ClCompile Include="patches\widescreen2d.cpp" />
     <ClCompile Include="patches\fps.cpp" />
     <ClCompile Include="patches\pausefix.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="winmm\32\winmm_32.asm" />
     <None Include=".gitignore" />
-    <None Include="winmm\winmm.def" />
+    <None Include="d3d11\d3d11.def" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="winmm\winmm.h" />
+    <ClInclude Include="d3d11\d3d11_proxy.h" />
     <ClInclude Include="patches\widescreen.h" />
+    <ClInclude Include="patches\widescreen2d.h" />
     <ClInclude Include="patches\fps.h" />
     <ClInclude Include="patches\pausefix.h" />
     <ClInclude Include="utils\memory.h" />
