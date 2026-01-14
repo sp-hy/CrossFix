@@ -1,7 +1,7 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 
 
-// If using a proxy build config, include the necessary code to proxy calls to winmm.dll
+// If using a proxy build config, include the necessary code to proxy calls to d3d11.dll
 #include <Windows.h>
 
 #include <iostream>
@@ -72,7 +72,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 	// Check if widescreen is enabled
 	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
 	int widescreenModeInt = settings.GetInt("widescreen_mode", 0);
-	bool widescreen2DEnabled = settings.GetBool("widescreen_2d_enabled", true);
 
 	if (widescreenEnabled) {
 		float ratio2D = 0.75f; 
@@ -96,21 +95,19 @@ DWORD WINAPI MainThread(LPVOID param) {
 		
 		// Configure 2D widescreen transformation (D3D11 proxy handles the hooking)
 		SetWidescreen2DRatio(ratio2D);
-		SetWidescreen2DEnabled(widescreen2DEnabled);
-		if (widescreen2DEnabled) {
-			std::cout << "2D widescreen transformation configured (waiting for device creation)" << std::endl;
-		}
+		SetWidescreen2DEnabled(true);
+		std::cout << "2D widescreen transformation configured (waiting for device creation)" << std::endl;
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
 	}
 
 	// Apply other patches
 	if (settings.GetBool("double_fps_mode", false)) {
-		if (ApplyDoubleFpsPatch(base)) std::cout << "Double FPS patch applied successfully!" << std::endl;
+		ApplyDoubleFpsPatch(base);
 	}
 
 	if (settings.GetBool("disable_pause_on_focus_loss", true)) {
-		if (ApplyDisablePausePatch(base)) std::cout << "Disable pause on focus loss patch applied successfully!" << std::endl;
+		ApplyDisablePausePatch(base);
 	} else {
 		std::cout << "Disable pause on focus loss disabled in settings" << std::endl;
 	}

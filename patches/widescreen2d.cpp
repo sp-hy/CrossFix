@@ -138,7 +138,12 @@ bool HookD3D11Device(ID3D11Device* pDevice) {
     VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, PAGE_EXECUTE_READWRITE, &old);
     vtable[DEVICE_CREATE_TEXTURE2D] = (void*)HookedCreateTexture2D;
     VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, old, &old);
-    std::cout << "[D3D11 Hook] Device Hooked" << std::endl;
+    
+    static bool logged = false;
+    if (!logged) {
+        std::cout << "[D3D11 Hook] Device Hooked" << std::endl;
+        logged = true;
+    }
     return true;
 }
 
@@ -158,7 +163,12 @@ bool HookD3D11Context(ID3D11DeviceContext* pContext) {
     VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, PAGE_EXECUTE_READWRITE, &old);
     vtable[CONTEXT_UPDATE_SUBRESOURCE] = (void*)HookedUpdateSubresource;
     VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, old, &old);
-    std::cout << "[D3D11 Hook] Context Hooked" << std::endl;
+    
+    static bool logged = false;
+    if (!logged) {
+        std::cout << "[D3D11 Hook] Context Hooked" << std::endl;
+        logged = true;
+    }
     return true;
 }
 
