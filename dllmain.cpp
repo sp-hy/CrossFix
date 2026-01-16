@@ -93,10 +93,14 @@ DWORD WINAPI MainThread(LPVOID param) {
 			std::cout << "Failed to apply widescreen patch!" << std::endl;
 		}
 		
-		// Configure 2D widescreen transformation (D3D11 proxy handles the hooking)
+		// Configure 2D widescreen transformation
 		SetWidescreen2DRatio(ratio2D);
 		SetWidescreen2DEnabled(true);
-		std::cout << "2D widescreen transformation configured (waiting for device creation)" << std::endl;
+		
+		// Initialize ASM hook for 2D backgrounds
+		if (!InitWidescreen2DHook()) {
+			std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
+		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
 	}
@@ -119,8 +123,8 @@ DWORD WINAPI MainThread(LPVOID param) {
 
 	std::cout << "Exiting..." << std::endl;
 	
-	// Cleanup D3D11 hooks
-	CleanupD3D11Hooks();
+	// Cleanup widescreen hooks
+	CleanupWidescreen2DHook();
 	
 	Sleep(1000);
 
