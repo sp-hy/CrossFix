@@ -1,177 +1,214 @@
 #include "widescreen2d.h"
 #include <iostream>
-#include <vector>
-#include <mutex>
-#include <d3d11.h>
+#include <cmath>
 
 static bool g_widescreen2DEnabled = false;
-static float g_widescreenRatio = 0.75f; 
-static std::mutex g_hookMutex;
+static float g_widescreenRatio = 0.75f; // 16:9 by default
+static LPVOID g_hookAddress = nullptr;
+static BYTE g_originalBytes[16] = {0};
+static const int g_hookSize = 5; // Size of JMP instruction
 
-// Custom GUID for tagging background textures
-static const GUID GUID_CrossFix_Tag = { 0x7a5c2b1e, 0x9f0e, 0x4c3d, { 0x8a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x6a, 0x7c } };
+// Storage for layer 0's original BG width and X position
+static short g_originalBgWidth = 0;
+static short g_originalBgX = 0;
+static short g_newBgX = 0;
+static bool g_bgDataValid = false;  // Flag to ensure we have valid BG data for this scene
 
-struct TexMetadata {
-    UINT width;
-    UINT height;
-    void* lastMappedData;
-    UINT lastMappedPitch;
-};
-
-const int DEVICE_CREATE_TEXTURE2D = 5;
-const int CONTEXT_MAP = 14;
-const int CONTEXT_UNMAP = 15;
-const int CONTEXT_UPDATE_SUBRESOURCE = 42;
-
-typedef HRESULT (STDMETHODCALLTYPE* CreateTexture2D_t)(ID3D11Device*, const D3D11_TEXTURE2D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture2D**);
-typedef void (STDMETHODCALLTYPE* UpdateSubresource_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, const D3D11_BOX*, const void*, UINT, UINT);
-typedef HRESULT (STDMETHODCALLTYPE* Map_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, D3D11_MAP, UINT, D3D11_MAPPED_SUBRESOURCE*);
-typedef void (STDMETHODCALLTYPE* Unmap_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT);
-
-static CreateTexture2D_t g_originalCreateTexture2D = nullptr;
-static UpdateSubresource_t g_originalUpdateSubresource = nullptr;
-static Map_t g_originalMap = nullptr;
-static Unmap_t g_originalUnmap = nullptr;
-
-static thread_local std::vector<BYTE> tl_rowBuffer;
-static thread_local std::vector<BYTE> tl_fullBuffer;
-
-void TransformInPlace(void* pData, UINT width, UINT height, UINT rowPitch, float ratio) {
-    if (!pData || rowPitch < width * 4) return;
-    if (tl_rowBuffer.size() < rowPitch) tl_rowBuffer.resize(rowPitch);
-    UINT newWidth = (UINT)(width * ratio);
-    if (newWidth % 2 != 0) newWidth++; 
-    UINT pad = (width - newWidth) / 2;
-    if (pad % 2 != 0) pad++;
-    BYTE* pPixels = (BYTE*)pData;
-    for (UINT y = 0; y < height; ++y) {
-        BYTE* pLine = pPixels + (y * rowPitch);
-        memcpy(tl_rowBuffer.data(), pLine, rowPitch);
-        memset(pLine, 0, rowPitch);
-        for (UINT x = 0; x < newWidth; ++x) {
-            UINT iSX = (UINT)((float)x / ratio);
-            if (iSX < width && (pad + x) < width) memcpy(pLine + (pad + x) * 4, tl_rowBuffer.data() + iSX * 4, 4);
-        }
+// The cave where our custom code will execute
+__declspec(naked) void HookCave() {
+    __asm {
+        // Save all registers we'll use
+        pushad
+        pushfd
+        
+        // Original instruction that we replaced: mov [eax+10h],edx
+        mov dword ptr [eax+10h], edx
+        
+        // Check if widescreen is enabled
+        mov cl, byte ptr [g_widescreen2DEnabled]
+        test cl, cl
+        je skip_transform
+        
+        // Get layer index from [ebp-70h]
+        // We need to use explicit hex notation and be careful with addressing
+        mov ecx, dword ptr [ebp-70h]
+        
+        // Check if this is layer 0 (starting new loop)
+        test ecx, ecx
+        jnz process_overlay
+        
+        // === LAYER 0 (Background) Processing ===
+process_background:
+        // Read and save original BG width and X position BEFORE we modify them
+        movsx ecx, word ptr [eax+10h]  // ecx = original width
+        movsx edx, word ptr [eax+0Ch]  // edx = original X position
+        
+        // Sanity check: only store if width is reasonable (> 0 and < 10000)
+        test ecx, ecx
+        jle skip_bg_store              // Skip if <= 0
+        cmp ecx, 10000
+        jge skip_bg_store              // Skip if >= 10000
+        
+        mov word ptr [g_originalBgWidth], cx
+        mov word ptr [g_originalBgX], dx
+        
+skip_bg_store:
+        // Calculate new width
+        cvtsi2ss xmm0, ecx            // xmm0 = original width (float)
+        movss xmm1, dword ptr [g_widescreenRatio]  // xmm1 = ratio
+        mulss xmm0, xmm1              // xmm0 = new width
+        cvttss2si ebx, xmm0           // ebx = new width (int)
+        mov word ptr [eax+10h], bx    // Store new width
+        
+        // Calculate new X position: bgXNew = bgX + (bgWidth - bgWidthNew) / 2
+        sub ecx, ebx                  // ecx = original - new
+        sar ecx, 1                    // ecx = (original - new) / 2
+        
+        add edx, ecx                  // edx = original X + padding = new X
+        mov word ptr [g_newBgX], dx   // Store new BG X for layers
+        mov word ptr [eax+0Ch], dx    // Store new X offset
+        
+        jmp skip_transform
+        
+        // === LAYER 1+ (Overlay) Processing ===
+process_overlay:
+        // Get original width before transformation
+        movsx edx, word ptr [eax+10h] // edx = original layer width
+        push ebx                      // Save ebx, we'll use it temporarily
+        movsx ebx, word ptr [g_originalBgWidth] // ebx = original BG width
+        
+        // Check if layer width matches BG width (treat as BG)
+        cmp edx, ebx
+        je process_as_background
+        
+        // Different width - this is an overlay element
+        // Resize the width
+        cvtsi2ss xmm0, edx            // xmm0 = original layer width
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1              // xmm0 = new layer width
+        cvttss2si edx, xmm0           // edx = new layer width
+        mov word ptr [eax+10h], dx    // Store new width
+        
+        // Calculate new X offset using formula:
+        // layerXNew = bgXNew + (layerX - bgX) * scale
+        
+        // Check if we have valid BG data (width should be non-zero)
+        movsx ecx, word ptr [g_originalBgWidth]
+        test ecx, ecx
+        jz skip_overlay_transform  // If BG width is 0, skip transformation
+        
+        movsx ebx, word ptr [eax+0Ch]      // ebx = layerX (original)
+        movsx ecx, word ptr [g_originalBgX] // ecx = bgX (original)
+        sub ebx, ecx                       // ebx = layerX - bgX
+        
+        // Scale the relative position
+        cvtsi2ss xmm0, ebx                 // xmm0 = (layerX - bgX)
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1                   // xmm0 = (layerX - bgX) * scale
+        cvttss2si ebx, xmm0                // ebx = scaled offset
+        
+        // Add to new BG position
+        movsx ecx, word ptr [g_newBgX]     // ecx = bgXNew
+        add ebx, ecx                       // ebx = bgXNew + scaled offset
+        mov word ptr [eax+0Ch], bx         // Store new X offset
+        
+skip_overlay_transform:
+        pop ebx                            // Restore ebx
+        jmp skip_transform
+        
+process_as_background:
+        // Layer has same width as BG - treat it exactly like layer 0
+        // edx contains the original width, ebx contains original BG width (same value)
+        
+        // Save original width for padding calculation
+        push edx                      // Save original width
+        
+        // Resize the width
+        cvtsi2ss xmm0, edx            // xmm0 = original width
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1              // xmm0 = new width
+        cvttss2si edx, xmm0           // edx = new width
+        mov word ptr [eax+10h], dx    // Store new width
+        
+        // Calculate centering offset (same as layer 0)
+        // offset_adjustment = (original_width - new_width) / 2
+        pop ebx                       // ebx = original width
+        sub ebx, edx                  // ebx = original - new
+        sar ebx, 1                    // ebx = padding
+        
+        movsx edx, word ptr [eax+0Ch] // Get current X offset
+        add edx, ebx                  // Add padding
+        mov word ptr [eax+0Ch], dx    // Store new X offset
+        pop ebx                       // Restore ebx
+        
+skip_transform:
+        // Restore registers
+        popfd
+        popad
+        
+        // Execute the next instruction that was partially overwritten: add dword ptr [ecx+04],14h
+        add dword ptr [ecx+04h], 14h
+        
+        // Return to caller (the CALL instruction will have pushed the return address)
+        ret
     }
 }
 
-HRESULT STDMETHODCALLTYPE HookedCreateTexture2D(ID3D11Device* This, const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) {
-    const D3D11_SUBRESOURCE_DATA* pDataToUse = pInitialData;
-    std::vector<BYTE> transformed;
-
-    if (g_widescreen2DEnabled && pDesc && pInitialData && pInitialData->pSysMem && pDesc->Width >= 200) {
-        // Any aspect ratio, but only Shader Resources (No Render Targets/Depth)
-        if (!(pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) && (pInitialData->SysMemPitch / pDesc->Width) == 4) {
-             size_t total = (size_t)pDesc->Height * pInitialData->SysMemPitch;
-             transformed.assign(total, 0);
-             memcpy(transformed.data(), pInitialData->pSysMem, total);
-             TransformInPlace(transformed.data(), pDesc->Width, pDesc->Height, pInitialData->SysMemPitch, g_widescreenRatio);
-             
-             static D3D11_SUBRESOURCE_DATA newData;
-             newData = *pInitialData;
-             newData.pSysMem = transformed.data();
-             pDataToUse = &newData;
-        }
+bool InitWidescreen2DHook() {
+    // Get the base address of CHRONOCROSS.exe
+    HMODULE hModule = GetModuleHandleA("CHRONOCROSS.exe");
+    if (!hModule) {
+        std::cerr << "[Widescreen2D] Failed to get CHRONOCROSS.exe module handle" << std::endl;
+        return false;
     }
-
-    HRESULT hr = g_originalCreateTexture2D(This, pDesc, pDataToUse, ppTexture2D);
-    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && pDesc && pDesc->Width >= 200) {
-        TexMetadata meta = { pDesc->Width, pDesc->Height, nullptr, 0 };
-        (*ppTexture2D)->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
-    }
-    return hr;
-}
-
-void STDMETHODCALLTYPE HookedUpdateSubresource(ID3D11DeviceContext* This, ID3D11Resource* pDst, UINT Sub, const D3D11_BOX* pBox, const void* pSrc, UINT Pitch, UINT Depth) {
-    if (g_widescreen2DEnabled && pSrc && !pBox) {
-        D3D11_RESOURCE_DIMENSION dim;
-        pDst->GetType(&dim);
-        if (dim == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
-            ID3D11Texture2D* pTex = (ID3D11Texture2D*)pDst;
-            D3D11_TEXTURE2D_DESC desc;
-            pTex->GetDesc(&desc);
-            // Process anything over 800w, regardless of aspect
-            if (desc.Width >= 200 && !(desc.BindFlags & D3D11_BIND_RENDER_TARGET) && (Pitch / desc.Width) == 4) {
-                if (tl_fullBuffer.size() < (size_t)desc.Height * Pitch) tl_fullBuffer.resize((size_t)desc.Height * Pitch);
-                memcpy(tl_fullBuffer.data(), pSrc, (size_t)desc.Height * Pitch);
-                TransformInPlace(tl_fullBuffer.data(), desc.Width, desc.Height, Pitch, g_widescreenRatio);
-                g_originalUpdateSubresource(This, pDst, Sub, pBox, tl_fullBuffer.data(), Pitch, Depth);
-                return;
-            }
-        }
-    }
-    g_originalUpdateSubresource(This, pDst, Sub, pBox, pSrc, Pitch, Depth);
-}
-
-HRESULT STDMETHODCALLTYPE HookedMap(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Sub, D3D11_MAP type, UINT flags, D3D11_MAPPED_SUBRESOURCE* pMapped) {
-    HRESULT hr = g_originalMap(This, pResource, Sub, type, flags, pMapped);
-    if (SUCCEEDED(hr) && pMapped && pMapped->pData && type == D3D11_MAP_WRITE_DISCARD) {
-        UINT size = sizeof(TexMetadata);
-        TexMetadata meta;
-        if (SUCCEEDED(pResource->GetPrivateData(GUID_CrossFix_Tag, &size, &meta))) {
-            meta.lastMappedData = pMapped->pData;
-            meta.lastMappedPitch = pMapped->RowPitch;
-            pResource->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
-        }
-    }
-    return hr;
-}
-
-void STDMETHODCALLTYPE HookedUnmap(ID3D11DeviceContext* This, ID3D11Resource* pResource, UINT Sub) {
-    UINT size = sizeof(TexMetadata);
-    TexMetadata meta;
-    if (g_widescreen2DEnabled && SUCCEEDED(pResource->GetPrivateData(GUID_CrossFix_Tag, &size, &meta)) && meta.lastMappedData) {
-        TransformInPlace(meta.lastMappedData, meta.width, meta.height, meta.lastMappedPitch, g_widescreenRatio);
-        meta.lastMappedData = nullptr;
-        pResource->SetPrivateData(GUID_CrossFix_Tag, sizeof(TexMetadata), &meta);
-    }
-    g_originalUnmap(This, pResource, Sub);
-}
-
-bool HookD3D11Device(ID3D11Device* pDevice) {
-    if (!pDevice) return false;
-    std::lock_guard<std::mutex> lock(g_hookMutex);
-    void** vtable = *(void***)pDevice;
-    if (vtable[DEVICE_CREATE_TEXTURE2D] == (void*)HookedCreateTexture2D) return true;
-    g_originalCreateTexture2D = (CreateTexture2D_t)vtable[DEVICE_CREATE_TEXTURE2D];
-    DWORD old;
-    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, PAGE_EXECUTE_READWRITE, &old);
-    vtable[DEVICE_CREATE_TEXTURE2D] = (void*)HookedCreateTexture2D;
-    VirtualProtect(&vtable[DEVICE_CREATE_TEXTURE2D], 4, old, &old);
     
-    static bool logged = false;
-    if (!logged) {
-        std::cout << "[D3D11 Hook] Device Hooked" << std::endl;
-        logged = true;
+    // Calculate the absolute address of the hook point
+    // CHRONOCROSS.exe+1CCF93 is where "mov [eax+10],edx" is located
+    g_hookAddress = (LPVOID)((uintptr_t)hModule + 0x1CCF93);
+    
+    std::cout << "[Widescreen2D] Hook address: 0x" << std::hex << (uintptr_t)g_hookAddress << std::dec << std::endl;
+    
+    // Save original bytes
+    memcpy(g_originalBytes, g_hookAddress, g_hookSize);
+    
+    // Create the CALL instruction to our cave
+    // CALL will push the return address automatically
+    BYTE callInstruction[5];
+    callInstruction[0] = 0xE8; // CALL opcode (relative)
+    DWORD relativeAddress = (DWORD)((uintptr_t)HookCave - (uintptr_t)g_hookAddress - 5);
+    memcpy(&callInstruction[1], &relativeAddress, 4);
+    
+    // Write the CALL instruction
+    DWORD oldProtect;
+    if (!VirtualProtect(g_hookAddress, g_hookSize, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        std::cerr << "[Widescreen2D] Failed to change memory protection" << std::endl;
+        return false;
     }
+    
+    memcpy(g_hookAddress, callInstruction, g_hookSize);
+    VirtualProtect(g_hookAddress, g_hookSize, oldProtect, &oldProtect);
+    
+    std::cout << "[Widescreen2D] ASM hook installed successfully" << std::endl;
     return true;
 }
 
-bool HookD3D11Context(ID3D11DeviceContext* pContext) {
-    if (!pContext) return false;
-    std::lock_guard<std::mutex> lock(g_hookMutex);
-    void** vtable = *(void***)pContext;
-    if (vtable[CONTEXT_MAP] == (void*)HookedMap) return true;
-    g_originalMap = (Map_t)vtable[CONTEXT_MAP];
-    g_originalUnmap = (Unmap_t)vtable[CONTEXT_UNMAP];
-    g_originalUpdateSubresource = (UpdateSubresource_t)vtable[CONTEXT_UPDATE_SUBRESOURCE];
-    DWORD old;
-    VirtualProtect(&vtable[CONTEXT_MAP], 8, PAGE_EXECUTE_READWRITE, &old);
-    vtable[CONTEXT_MAP] = (void*)HookedMap;
-    vtable[CONTEXT_UNMAP] = (void*)HookedUnmap;
-    VirtualProtect(&vtable[CONTEXT_MAP], 8, old, &old);
-    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, PAGE_EXECUTE_READWRITE, &old);
-    vtable[CONTEXT_UPDATE_SUBRESOURCE] = (void*)HookedUpdateSubresource;
-    VirtualProtect(&vtable[CONTEXT_UPDATE_SUBRESOURCE], 4, old, &old);
-    
-    static bool logged = false;
-    if (!logged) {
-        std::cout << "[D3D11 Hook] Context Hooked" << std::endl;
-        logged = true;
+void CleanupWidescreen2DHook() {
+    if (g_hookAddress) {
+        DWORD oldProtect;
+        VirtualProtect(g_hookAddress, g_hookSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+        memcpy(g_hookAddress, g_originalBytes, g_hookSize);
+        VirtualProtect(g_hookAddress, g_hookSize, oldProtect, &oldProtect);
+        
+        std::cout << "[Widescreen2D] ASM hook removed" << std::endl;
     }
-    return true;
 }
 
-void CleanupD3D11Hooks() { }
-void SetWidescreen2DRatio(float ratio) { g_widescreenRatio = ratio; }
-void SetWidescreen2DEnabled(bool enabled) { g_widescreen2DEnabled = enabled; }
+void SetWidescreen2DRatio(float ratio) {
+    g_widescreenRatio = ratio;
+    std::cout << "[Widescreen2D] Ratio set to: " << ratio << std::endl;
+}
+
+void SetWidescreen2DEnabled(bool enabled) {
+    g_widescreen2DEnabled = enabled;
+    std::cout << "[Widescreen2D] " << (enabled ? "Enabled" : "Disabled") << std::endl;
+}
