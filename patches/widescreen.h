@@ -21,3 +21,9 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, WidescreenMode* outMode);
 
 // Get the 2D ratio for a given widescreen mode
 float GetWidescreenRatio2D(WidescreenMode mode);
+
+// Start dynamic resolution monitoring (for auto-detect mode)
+void StartDynamicWidescreenMonitoring(uintptr_t base);
+
+// Stop dynamic resolution monitoring
+void StopDynamicWidescreenMonitoring();

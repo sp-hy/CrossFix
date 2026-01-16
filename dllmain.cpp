@@ -96,6 +96,11 @@ DWORD WINAPI MainThread(LPVOID param) {
 			if (!InitWidescreen2DHook()) {
 				std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
 			}
+			
+			// Start dynamic monitoring if auto-detect was used
+			if (widescreenModeInt == 0 || widescreenModeInt == WIDESCREEN_AUTO) {
+				StartDynamicWidescreenMonitoring(base);
+			}
 		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;

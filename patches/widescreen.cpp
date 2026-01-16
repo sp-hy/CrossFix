@@ -1,5 +1,12 @@
 #include "widescreen.h"
+#include "widescreen2d.h"
 #include <iostream>
+
+// Dynamic monitoring state
+static HANDLE g_monitorThread = nullptr;
+static bool g_monitoringActive = false;
+static uintptr_t g_monitorBase = 0;
+static WidescreenMode g_currentMode = WIDESCREEN_16_9;
 
 // 16:9 widescreen hook - multiply by 3/4
 __declspec(naked) void WidescreenHook_16_9() {
@@ -238,6 +245,9 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, WidescreenMode* outMode) {
 		*outMode = mode;
 	}
 	
+	// Store the current mode for monitoring
+	g_currentMode = mode;
+	
 	// Apply the patch with the detected mode
 	return ApplyWidescreenPatch(base, mode);
 }
@@ -261,4 +271,109 @@ float GetWidescreenRatio2D(WidescreenMode mode) {
 		default:
 			return 0.75f;  // Default to 16:9
 	}
+}
+
+// Thread function for dynamic resolution monitoring
+DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
+	uintptr_t base = (uintptr_t)param;
+	uintptr_t resXAddr = base + 0xE2F488;
+	uintptr_t resYAddr = base + 0xE2F48C;
+	
+	int lastResX = 0;
+	int lastResY = 0;
+	
+	while (g_monitoringActive) {
+		try {
+			int resX = *(int*)resXAddr;
+			int resY = *(int*)resYAddr;
+			
+			// Check if resolution has changed
+			if (resX > 0 && resY > 0 && (resX != lastResX || resY != lastResY)) {
+				lastResX = resX;
+				lastResY = resY;
+				
+				// Calculate new aspect ratio
+				float aspectRatio = (float)resX / (float)resY;
+				
+				// Determine the appropriate mode
+				WidescreenMode newMode;
+				const char* modeName = "";
+				
+				if (aspectRatio >= 3.2f) {
+					newMode = WIDESCREEN_32_9;
+					modeName = "32:9";
+				} else if (aspectRatio >= 2.1f) {
+					newMode = WIDESCREEN_21_9;
+					modeName = "21:9";
+				} else if (aspectRatio >= 1.6f) {
+					newMode = WIDESCREEN_16_9;
+					modeName = "16:9";
+				} else {
+					// Not widescreen, skip
+					continue;
+				}
+				
+				// Check if mode has changed
+				if (newMode != g_currentMode) {
+					std::cout << "Resolution changed to " << resX << "x" << resY 
+					          << " (aspect ratio: " << aspectRatio << ")" << std::endl;
+					std::cout << "Switching widescreen mode to: " << modeName << std::endl;
+					
+					// Apply the new widescreen patch
+					if (ApplyWidescreenPatch(base, newMode)) {
+						g_currentMode = newMode;
+						
+						// Update 2D ratio as well
+						float ratio2D = GetWidescreenRatio2D(newMode);
+						SetWidescreen2DRatio(ratio2D);
+						
+						std::cout << "Widescreen mode updated successfully!" << std::endl;
+					} else {
+						std::cout << "Failed to update widescreen mode!" << std::endl;
+					}
+				}
+			}
+		} catch (...) {
+			// Ignore errors and continue monitoring
+		}
+		
+		// Check every second
+		Sleep(1000);
+	}
+	
+	return 0;
+}
+
+// Start dynamic resolution monitoring
+void StartDynamicWidescreenMonitoring(uintptr_t base) {
+	if (g_monitoringActive) {
+		return; // Already monitoring
+	}
+	
+	g_monitorBase = base;
+	g_monitoringActive = true;
+	
+	g_monitorThread = CreateThread(nullptr, 0, ResolutionMonitorThread, (LPVOID)base, 0, nullptr);
+	
+	if (!g_monitorThread) {
+		std::cout << "Failed to start dynamic widescreen monitoring thread!" << std::endl;
+		g_monitoringActive = false;
+	}
+}
+
+// Stop dynamic resolution monitoring
+void StopDynamicWidescreenMonitoring() {
+	if (!g_monitoringActive) {
+		return; // Not monitoring
+	}
+	
+	g_monitoringActive = false;
+	
+	if (g_monitorThread) {
+		WaitForSingleObject(g_monitorThread, 2000); // Wait up to 2 seconds
+		CloseHandle(g_monitorThread);
+		g_monitorThread = nullptr;
+	}
+	
+	std::cout << "Dynamic widescreen monitoring stopped" << std::endl;
 }
