@@ -60,27 +60,42 @@ DWORD WINAPI MainThread(LPVOID param) {
 	if (widescreenEnabled) {
 		float ratio2D = 0.75f; 
 		WidescreenMode mode = WIDESCREEN_16_9;
+		bool success = false;
 		
-		if (widescreenModeInt >= 0 && widescreenModeInt <= 2) {
+		// Check if auto-detect is enabled (widescreen_mode = 0)
+		if (widescreenModeInt == 0 || widescreenModeInt == WIDESCREEN_AUTO) {
+			std::cout << "Auto-detecting widescreen mode from screen resolution..." << std::endl;
+			
+			// Use auto-detection
+			if (ApplyWidescreenPatchAuto(base, &mode)) {
+				// Get the 2D ratio for the detected mode
+				ratio2D = GetWidescreenRatio2D(mode);
+				success = true;
+			} else {
+				std::cout << "Auto-detection failed, widescreen patch not applied" << std::endl;
+			}
+		} else if (widescreenModeInt >= 1 && widescreenModeInt <= 3) {
+			// Manual mode selection
 			mode = static_cast<WidescreenMode>(widescreenModeInt);
-			switch (mode) {
-				case 0: mode = WIDESCREEN_16_9; ratio2D = 0.75f; break;
-				case 1: mode = WIDESCREEN_21_9; ratio2D = 0.571428f; break;
-				case 2: mode = WIDESCREEN_32_9; ratio2D = 0.375f; break;
+			ratio2D = GetWidescreenRatio2D(mode);
+			
+			if (ApplyWidescreenPatch(base, mode)) {
+				success = true;
+			} else {
+				std::cout << "Failed to apply widescreen patch!" << std::endl;
 			}
 		} else {
-			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), defaulting to 16:9" << std::endl;
-		}
-
-		if (!ApplyWidescreenPatch(base, mode)) {
-			std::cout << "Failed to apply widescreen patch!" << std::endl;
+			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), use 0 for auto-detect or 1-3 for manual mode" << std::endl;
 		}
 		
-		SetWidescreen2DRatio(ratio2D);
-		SetWidescreen2DEnabled(true);
-		
-		if (!InitWidescreen2DHook()) {
-			std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
+		// Only initialize 2D widescreen if the 3D patch was successful
+		if (success) {
+			SetWidescreen2DRatio(ratio2D);
+			SetWidescreen2DEnabled(true);
+			
+			if (!InitWidescreen2DHook()) {
+				std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
+			}
 		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
