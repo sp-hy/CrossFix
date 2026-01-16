@@ -1,6 +1,7 @@
 #include "d3d11_proxy.h"
 #include <string>
 #include <iostream>
+#include "../patches/upscale4k.h"
 
 static HMODULE g_hD3D11 = nullptr;
 
@@ -57,7 +58,11 @@ extern "C" {
         if (!pD3D11CreateDevice) InitD3D11Proxy();
         if (!pD3D11CreateDevice) return E_FAIL;
         
-        return pD3D11CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, ppDevice, pFeatureLevel, ppImmediateContext);
+        HRESULT hr = pD3D11CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, ppDevice, pFeatureLevel, ppImmediateContext);
+        if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
+            ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+        }
+        return hr;
     }
 
     HRESULT WINAPI D3D11CreateDeviceAndSwapChain_wrapper(
@@ -77,7 +82,11 @@ extern "C" {
         if (!pD3D11CreateDeviceAndSwapChain) InitD3D11Proxy();
         if (!pD3D11CreateDeviceAndSwapChain) return E_FAIL;
         
-        return pD3D11CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
+        HRESULT hr = pD3D11CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
+        if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
+            ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+        }
+        return hr;
     }
     
     HRESULT WINAPI D3D11CoreCreateDevice_wrapper(void* a1, void* a2, void* a3) {

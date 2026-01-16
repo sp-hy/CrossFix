@@ -100,6 +100,7 @@
     <ClCompile Include="patches\widescreen2d.cpp" />
     <ClCompile Include="patches\fps.cpp" />
     <ClCompile Include="patches\pausefix.cpp" />
+    <ClCompile Include="patches\upscale4k.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
   </ItemGroup>
@@ -113,6 +114,7 @@
     <ClInclude Include="patches\widescreen2d.h" />
     <ClInclude Include="patches\fps.h" />
     <ClInclude Include="patches\pausefix.h" />
+    <ClInclude Include="patches\upscale4k.h" />
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
   </ItemGroup>
