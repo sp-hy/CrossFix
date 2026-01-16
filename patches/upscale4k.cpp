@@ -199,5 +199,9 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
         VirtualProtect(deviceVtable, sizeof(void*) * 10, oldProtect, &oldProtect);
     }
     
+#ifdef _DEBUG
     std::cout << "Upscale 4K Patch Applied (Multiplier: " << ResMultiplier << ")" << std::endl;
+#else
+    std::cout << "Upscale 4K Patch Applied" << std::endl;
+#endif
 }

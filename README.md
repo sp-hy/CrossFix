@@ -6,7 +6,12 @@ Fixes and enhancements for the PC version of Chrono Cross.
 
 - **Widescreen Support** - Play in 16:9, 21:9, or 32:9 aspect ratios
 - **60 FPS Mode** - Unlock the frame rate from 30 to 60 FPS
+- **4K Upscaling** - Render the game at 4K resolution for improved visual quality
 - **Background Play** - Keep the game running when tabbed out
+
+## Todo:
+- Unstretch Menus
+- Unstretch FMVs
 
 ## Installation
 
@@ -40,6 +45,10 @@ double_fps_mode=0
 # 0 = game pauses when window is inactive (default behavior)
 # 1 = game & music continue running when window is inactive
 disable_pause_on_focus_loss=1
+
+# Enable or disable 4K Upscaling
+# 0 = disabled, 1 = enabled
+upscale_4k=1
 ```
 
 ## Notes

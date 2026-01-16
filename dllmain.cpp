@@ -1,9 +1,4 @@
-// dllmain.cpp : Defines the entry point for the DLL application.
-
-
-// If using a proxy build config, include the necessary code to proxy calls to d3d11.dll
 #include <Windows.h>
-
 #include <iostream>
 #include <string>
 #include <algorithm>
@@ -15,61 +10,50 @@
 #include "patches/pausefix.h"
 #include "utils/settings.h"
 
-
-// Get handle from the injected process
 HANDLE crossfix_handle = GetCurrentProcess();
 
-// Spawn thread to do work
 DWORD WINAPI MainThread(LPVOID param) {
-    // Get base address from the injected process
 	uintptr_t base = (uintptr_t)GetModuleHandle(NULL);
 
-	// Verify we're running in CHRONOCROSS.exe
 	char exePath[MAX_PATH];
 	if (GetModuleFileNameA(NULL, exePath, MAX_PATH) == 0) {
-		// Could not get executable name, exit silently
 		FreeLibraryAndExitThread((HMODULE)param, 0);
 		return 0;
 	}
 
-	// Extract just the executable name from the full path
 	char* exeName = strrchr(exePath, '\\');
 	if (exeName == NULL) {
-		exeName = exePath; // No path separator found, use the whole string
+		exeName = exePath;
 	} else {
-		exeName++; // Skip the backslash
+		exeName++;
 	}
 
-	// Convert to lowercase for case-insensitive comparison
 	std::string exeNameLower(exeName);
 	std::transform(exeNameLower.begin(), exeNameLower.end(), exeNameLower.begin(), ::tolower);
 
-	// Check if we're running in CHRONOCROSS.exe
 	if (exeNameLower != "chronocross.exe") {
-		// Not the target executable, exit silently without showing console
 		FreeLibraryAndExitThread((HMODULE)param, 0);
 		return 0;
 	}
 
-	// We're in CHRONOCROSS.exe - allocate a console and show status
 	AllocConsole();
 	FILE* f;
 	freopen_s(&f, "CONOUT$", "w", stdout);
 
-	// Log a message
-	std::cout << "CrossFix - v0.8 (200px Threshold)" << std::endl;
+	std::cout << "CrossFix - v0.2" << std::endl;
 	std::cout << std::endl;
+	std::cout << "https://github.com/sp-hy/CrossFix" << std::endl;
+	std::cout << std::endl;
+#ifdef _DEBUG
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
+#endif
 	std::cout << std::endl;
 
-	// Load settings
 	Settings settings;
 	settings.Load("settings.ini");
 
-	// Initialize D3D11 proxy
 	InitD3D11Proxy();
 
-	// Check if widescreen is enabled
 	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
 	int widescreenModeInt = settings.GetInt("widescreen_mode", 0);
 
@@ -88,16 +72,13 @@ DWORD WINAPI MainThread(LPVOID param) {
 			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), defaulting to 16:9" << std::endl;
 		}
 
-		// Apply widescreen patch with selected mode
 		if (!ApplyWidescreenPatch(base, mode)) {
 			std::cout << "Failed to apply widescreen patch!" << std::endl;
 		}
 		
-		// Configure 2D widescreen transformation
 		SetWidescreen2DRatio(ratio2D);
 		SetWidescreen2DEnabled(true);
 		
-		// Initialize ASM hook for 2D backgrounds
 		if (!InitWidescreen2DHook()) {
 			std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
 		}
@@ -105,7 +86,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
 	}
 
-	// Apply other patches
 	if (settings.GetBool("double_fps_mode", false)) {
 		ApplyDoubleFpsPatch(base);
 	}
@@ -116,39 +96,12 @@ DWORD WINAPI MainThread(LPVOID param) {
 		std::cout << "Disable pause on focus loss disabled in settings" << std::endl;
 	}
 
-	// Run thread loop until END key is pressed
-	while (!GetAsyncKeyState(VK_END)) {
-		Sleep(1000);
-	}
-
-	std::cout << "Exiting..." << std::endl;
-	
-	// Cleanup widescreen hooks
-	CleanupWidescreen2DHook();
-	
-	Sleep(1000);
-
-	HWND consoleWindow = GetConsoleWindow();
-	FreeConsole();
-	if (consoleWindow != NULL) {
-		PostMessage(consoleWindow, WM_CLOSE, 0, 0);
-	}
-
-	FreeLibraryAndExitThread((HMODULE)param, 0);
 	return 0;
 }
 
-
-// Main DLL entry point
-BOOL APIENTRY DllMain(HMODULE hModule,
-	DWORD  ul_reason_for_call,
-	LPVOID lpReserved
-)
-{
-	switch (ul_reason_for_call)
-	{
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
+	switch (ul_reason_for_call) {
 	case DLL_PROCESS_ATTACH:
-		// Create thread
 		CreateThread(0, 0, MainThread, hModule, 0, 0);
 		break;
 	case DLL_THREAD_ATTACH:
@@ -158,4 +111,3 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	}
 	return TRUE;
 }
-

@@ -5,9 +5,6 @@
 // This hooks the instruction at CHRONOCROSS.exe+1CCF93 to modify image dimensions
 bool InitWidescreen2DHook();
 
-// Cleanup the ASM hook
-void CleanupWidescreen2DHook();
-
 // Set the widescreen ratio for 2D background transformation
 // ratio: the horizontal compression ratio (e.g., 0.75 for 16:9, 0.571 for 21:9)
 void SetWidescreen2DRatio(float ratio);
