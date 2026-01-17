@@ -9,6 +9,8 @@ public:
     int GetInt(const std::string& key, int defaultValue = 0) const;
     bool GetBool(const std::string& key, bool defaultValue = false) const;
     std::string GetString(const std::string& key, const std::string& defaultValue = "") const;
+    bool SaveDefault(const std::string& filename);
+
 
 private:
     std::map<std::string, std::string> values;

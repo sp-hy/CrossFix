@@ -2,9 +2,11 @@
 
 #define NOMINMAX
 #include "upscale4k.h"
+#include <Windows.h>
 #include <algorithm>
 #include <iostream>
 #include "../utils/settings.h"
+
 
 namespace {
     // Upscale configuration
@@ -164,11 +166,22 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
     if (applied) return;
     applied = true;
 
+    char exePath[MAX_PATH];
+    std::string settingsPath = "settings.ini";
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
+        std::string exePathStr(exePath);
+        size_t lastBackslash = exePathStr.find_last_of("\\/");
+        if (lastBackslash != std::string::npos) {
+            settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
+        }
+    }
+
     Settings settings;
-    settings.Load("settings.ini");
+    settings.Load(settingsPath);
     if (!settings.GetBool("upscale_4k", true)) {
         return;
     }
+
 
     void** contextVtable = *(void***)pContext;
     void** deviceVtable = *(void***)pDevice;

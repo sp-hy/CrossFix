@@ -49,8 +49,16 @@ DWORD WINAPI MainThread(LPVOID param) {
 #endif
 	std::cout << std::endl;
 
+	std::string settingsPath = "settings.ini";
+	std::string exePathStr(exePath);
+	size_t lastBackslash = exePathStr.find_last_of("\\/");
+	if (lastBackslash != std::string::npos) {
+		settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
+	}
+
 	Settings settings;
-	settings.Load("settings.ini");
+	settings.Load(settingsPath);
+
 
 	InitD3D11Proxy();
 

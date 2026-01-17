@@ -2,6 +2,8 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <iostream>
+
 
 Settings::Settings() {
 }
@@ -18,7 +20,13 @@ std::string Settings::Trim(const std::string& str) const {
 bool Settings::Load(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        return false;
+        if (SaveDefault(filename)) {
+            // Reload the newly created file
+            file.open(filename);
+            if (!file.is_open()) return false;
+        } else {
+            return false;
+        }
     }
 
     std::string line;
@@ -97,3 +105,32 @@ std::string Settings::GetString(const std::string& key, const std::string& defau
     }
     return it->second;
 }
+
+bool Settings::SaveDefault(const std::string& filename) {
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        return false;
+    }
+
+    file << "# Chrono Cross Crossfix Settings" << std::endl << std::endl;
+    file << "# Enable or disable the dynamic widescreen patch" << std::endl;
+    file << "# This will automatically detect and adjust to any resolution/aspect ratio" << std::endl;
+    file << "# Must be used with the setting ScreenType: Full" << std::endl;
+    file << "widescreen_enabled=1" << std::endl << std::endl;
+    file << "# Enable or disable the double FPS mode" << std::endl;
+    file << "# Should be used with the slowdown mode (Press F1 in game), Should provide a smooth 60 everywhere" << std::endl;
+    file << "# Disable if you use another tool like SpecialK" << std::endl;
+    file << "# 0 = disabled (30 field/60 battle FPS), 1 = enabled (60 FPS everywhere)" << std::endl;
+    file << "double_fps_mode=1" << std::endl << std::endl;
+    file << "# Disable pause when window loses focus" << std::endl;
+    file << "# 0 = game pauses when window is inactive (default behavior)" << std::endl;
+    file << "# 1 = game & music continue running when window is inactive" << std::endl;
+    file << "disable_pause_on_focus_loss=1" << std::endl << std::endl;
+    file << "# Enable or disable 4K Upscaling" << std::endl;
+    file << "# 0 = disabled, 1 = enabled" << std::endl;
+    file << "upscale_4k=1" << std::endl;
+
+    file.close();
+    return true;
+}
+
