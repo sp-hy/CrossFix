@@ -6,8 +6,9 @@
 enum WidescreenMode {
     WIDESCREEN_AUTO = 0,  // Auto-detect from screen resolution
     WIDESCREEN_16_9 = 1,  // 16:9 aspect ratio
-    WIDESCREEN_21_9 = 2,  // 21:9 ultrawide
-    WIDESCREEN_32_9 = 3   // 32:9 super ultrawide
+    WIDESCREEN_16_10 = 2, // 16:10 aspect ratio
+    WIDESCREEN_21_9 = 3,  // 21:9 ultrawide
+    WIDESCREEN_32_9 = 4   // 32:9 super ultrawide
 };
 
 // Apply the widescreen patch to the game with the specified mode
@@ -27,3 +28,6 @@ void StartDynamicWidescreenMonitoring(uintptr_t base);
 
 // Stop dynamic resolution monitoring
 void StopDynamicWidescreenMonitoring();
+
+// Restore default (non-widescreen) behavior
+bool RestoreDefaultBehavior(uintptr_t base);

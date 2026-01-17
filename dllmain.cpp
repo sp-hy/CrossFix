@@ -74,7 +74,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 			} else {
 				std::cout << "Auto-detection failed, widescreen patch not applied" << std::endl;
 			}
-		} else if (widescreenModeInt >= 1 && widescreenModeInt <= 3) {
+		} else if (widescreenModeInt >= 1 && widescreenModeInt <= 4) {
 			// Manual mode selection
 			mode = static_cast<WidescreenMode>(widescreenModeInt);
 			ratio2D = GetWidescreenRatio2D(mode);
@@ -85,7 +85,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 				std::cout << "Failed to apply widescreen patch!" << std::endl;
 			}
 		} else {
-			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), use 0 for auto-detect or 1-3 for manual mode" << std::endl;
+			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), use 0 for auto-detect or 1-4 for manual mode" << std::endl;
 		}
 		
 		// Only initialize 2D widescreen if the 3D patch was successful

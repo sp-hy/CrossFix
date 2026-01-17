@@ -8,6 +8,11 @@ static bool g_monitoringActive = false;
 static uintptr_t g_monitorBase = 0;
 static WidescreenMode g_currentMode = WIDESCREEN_16_9;
 
+// Original bytes storage for restoring default behavior
+static unsigned char g_originalBytes1[8] = {0};
+static unsigned char g_originalBytes2[8] = {0};
+static bool g_originalBytesSaved = false;
+
 // 16:9 widescreen hook - multiply by 3/4
 __declspec(naked) void WidescreenHook_16_9() {
 	__asm {
@@ -58,6 +63,34 @@ __declspec(naked) void WidescreenHook_21_9() {
 	}
 }
 
+// 16:10 widescreen hook - multiply by 5/6
+__declspec(naked) void WidescreenHook_16_10() {
+	__asm {
+		// Widescreen modification code for 16:10
+		push eax
+		push edx
+		push ebx              // need to save ebx for division
+		
+		mov eax, edi          // eax = result * IR1
+		imul eax, eax, 5      // eax = (result * IR1) * 5
+		mov ebx, 6            // divisor = 6
+		cdq                   // sign extend eax into edx:eax for division
+		idiv ebx              // eax = (result * IR1) * 5 / 6
+		mov edi, eax          // edi = modified value
+		
+		pop ebx               // restore ebx
+		pop edx               // restore edx
+		pop eax               // restore eax
+		
+		// Execute the original instructions we replaced
+		mov eax, [esi+0x60]   // original: read OFX
+		cdq                   // original: sign extend
+		add edi, eax          // original: add OFX
+		adc ecx, edx          // original: add with carry
+		ret
+	}
+}
+
 // 32:9 super ultrawide hook - multiply by 3/8
 __declspec(naked) void WidescreenHook_32_9() {
 	__asm {
@@ -93,6 +126,10 @@ bool ApplyWidescreenPatch(uintptr_t base, WidescreenMode mode) {
 			hookFunction = (void*)WidescreenHook_16_9;
 			modeName = "16:9";
 			break;
+		case WIDESCREEN_16_10:
+			hookFunction = (void*)WidescreenHook_16_10;
+			modeName = "16:10";
+			break;
 		case WIDESCREEN_21_9:
 			hookFunction = (void*)WidescreenHook_21_9;
 			modeName = "21:9";
@@ -109,6 +146,13 @@ bool ApplyWidescreenPatch(uintptr_t base, WidescreenMode mode) {
 	// Calculate the addresses to patch
 	uintptr_t addr1 = base + 0x18EE7B;
 	uintptr_t addr2 = base + 0x18AD25;
+	
+	// Save original bytes if not already saved
+	if (!g_originalBytesSaved) {
+		memcpy(g_originalBytes1, (void*)addr1, 8);
+		memcpy(g_originalBytes2, (void*)addr2, 8);
+		g_originalBytesSaved = true;
+	}
 	
 	// Calculate relative call address for addr1
 	int32_t relativeAddr1 = (int32_t)((uintptr_t)hookFunction - (addr1 + 5));
@@ -196,7 +240,7 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, WidescreenMode* outMode) {
 	// Validate the resolution values
 	if (resX <= 0 || resY <= 0) {
 		std::cout << "Invalid screen resolution detected: " << resX << "x" << resY << std::endl;
-		std::cout << "The game may not have initialized the resolution yet. Try setting widescreen_mode manually (1=16:9, 2=21:9, 3=32:9)" << std::endl;
+		std::cout << "The game may not have initialized the resolution yet. Try setting widescreen_mode manually (1=16:9, 2=16:10, 3=21:9, 4=32:9)" << std::endl;
 		return false;
 	}
 	
@@ -215,6 +259,7 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, WidescreenMode* outMode) {
 	WidescreenMode mode;
 	const char* modeName = "";
 	
+	// 16:10 = 1.6
 	// 16:9 = 1.777...
 	// 21:9 = 2.333...
 	// 32:9 = 3.555...
@@ -228,13 +273,17 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, WidescreenMode* outMode) {
 		// 21:9 ultrawide (e.g., 2560x1080, 3440x1440)
 		mode = WIDESCREEN_21_9;
 		modeName = "21:9";
-	} else if (aspectRatio >= 1.6f) {
+	} else if (aspectRatio >= 1.7f) {
 		// 16:9 widescreen (e.g., 1920x1080, 2560x1440, 3840x2160)
 		mode = WIDESCREEN_16_9;
 		modeName = "16:9";
+	} else if (aspectRatio >= 1.55f) {
+		// 16:10 widescreen (e.g., 1920x1200, 2560x1600)
+		mode = WIDESCREEN_16_10;
+		modeName = "16:10";
 	} else {
 		// Aspect ratio is too narrow for widescreen (4:3 or similar)
-		std::cout << "Aspect ratio " << aspectRatio << " is not widescreen (< 16:9). Widescreen patch not applied." << std::endl;
+		std::cout << "Aspect ratio " << aspectRatio << " is not widescreen (< 16:10). Widescreen patch not applied." << std::endl;
 		return false;
 	}
 	
@@ -264,6 +313,8 @@ float GetWidescreenRatio2D(WidescreenMode mode) {
 			return 0.75f;  // Default to 16:9 if called with AUTO (shouldn't happen)
 		case WIDESCREEN_16_9:
 			return 0.75f;  // 3/4
+		case WIDESCREEN_16_10:
+			return 0.833333f;  // 5/6
 		case WIDESCREEN_21_9:
 			return 0.571428f;  // 4/7
 		case WIDESCREEN_32_9:
@@ -271,6 +322,35 @@ float GetWidescreenRatio2D(WidescreenMode mode) {
 		default:
 			return 0.75f;  // Default to 16:9
 	}
+}
+
+// Restore default (non-widescreen) behavior
+bool RestoreDefaultBehavior(uintptr_t base) {
+	if (!g_originalBytesSaved) {
+		std::cout << "Cannot restore default behavior: original bytes not saved" << std::endl;
+		return false;
+	}
+	
+	uintptr_t addr1 = base + 0x18EE7B;
+	uintptr_t addr2 = base + 0x18AD25;
+	
+	// Restore original bytes
+	if (!WriteMemory(addr1, g_originalBytes1, 8)) {
+		std::cout << "Failed to restore address 1 (0x" << std::hex << addr1 << ")" << std::dec << std::endl;
+		return false;
+	}
+	
+	if (!WriteMemory(addr2, g_originalBytes2, 8)) {
+		std::cout << "Failed to restore address 2 (0x" << std::hex << addr2 << ")" << std::dec << std::endl;
+		return false;
+	}
+	
+	std::cout << "Restored default (4:3) behavior" << std::endl;
+	
+	// Also disable 2D widescreen
+	SetWidescreen2DEnabled(false);
+	
+	return true;
 }
 
 // Thread function for dynamic resolution monitoring
@@ -298,6 +378,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				// Determine the appropriate mode
 				WidescreenMode newMode;
 				const char* modeName = "";
+				bool isWidescreen = true;
 				
 				if (aspectRatio >= 3.2f) {
 					newMode = WIDESCREEN_32_9;
@@ -305,16 +386,32 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				} else if (aspectRatio >= 2.1f) {
 					newMode = WIDESCREEN_21_9;
 					modeName = "21:9";
-				} else if (aspectRatio >= 1.6f) {
+				} else if (aspectRatio >= 1.7f) {
 					newMode = WIDESCREEN_16_9;
 					modeName = "16:9";
+				} else if (aspectRatio >= 1.55f) {
+					newMode = WIDESCREEN_16_10;
+					modeName = "16:10";
 				} else {
-					// Not widescreen, skip
-					continue;
+					// Not widescreen (4:3 or similar)
+					isWidescreen = false;
 				}
 				
-				// Check if mode has changed
-				if (newMode != g_currentMode) {
+				// Check if we need to change modes
+				if (!isWidescreen && g_currentMode != WIDESCREEN_AUTO) {
+					// Switch from widescreen to 4:3
+					std::cout << "Resolution changed to " << resX << "x" << resY 
+					          << " (aspect ratio: " << aspectRatio << ")" << std::endl;
+					std::cout << "Switching to default 4:3 behavior" << std::endl;
+					
+					if (RestoreDefaultBehavior(base)) {
+						g_currentMode = WIDESCREEN_AUTO; // Use AUTO as marker for "disabled"
+						std::cout << "Default behavior restored successfully!" << std::endl;
+					} else {
+						std::cout << "Failed to restore default behavior!" << std::endl;
+					}
+				} else if (isWidescreen && (g_currentMode == WIDESCREEN_AUTO || newMode != g_currentMode)) {
+					// Switch to widescreen or change widescreen mode
 					std::cout << "Resolution changed to " << resX << "x" << resY 
 					          << " (aspect ratio: " << aspectRatio << ")" << std::endl;
 					std::cout << "Switching widescreen mode to: " << modeName << std::endl;
@@ -323,9 +420,10 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 					if (ApplyWidescreenPatch(base, newMode)) {
 						g_currentMode = newMode;
 						
-						// Update 2D ratio as well
+						// Update 2D ratio and re-enable if it was disabled
 						float ratio2D = GetWidescreenRatio2D(newMode);
 						SetWidescreen2DRatio(ratio2D);
+						SetWidescreen2DEnabled(true);
 						
 						std::cout << "Widescreen mode updated successfully!" << std::endl;
 					} else {
