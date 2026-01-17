@@ -55,52 +55,21 @@ DWORD WINAPI MainThread(LPVOID param) {
 	InitD3D11Proxy();
 
 	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
-	int widescreenModeInt = settings.GetInt("widescreen_mode", 0);
 
 	if (widescreenEnabled) {
-		float ratio2D = 0.75f; 
-		WidescreenMode mode = WIDESCREEN_16_9;
-		bool success = false;
+		std::cout << "Initializing dynamic widescreen patch..." << std::endl;
 		
-		// Check if auto-detect is enabled (widescreen_mode = 0)
-		if (widescreenModeInt == 0 || widescreenModeInt == WIDESCREEN_AUTO) {
-			std::cout << "Auto-detecting widescreen mode from screen resolution..." << std::endl;
-			
-			// Use auto-detection
-			if (ApplyWidescreenPatchAuto(base, &mode)) {
-				// Get the 2D ratio for the detected mode
-				ratio2D = GetWidescreenRatio2D(mode);
-				success = true;
-			} else {
-				std::cout << "Auto-detection failed, widescreen patch not applied" << std::endl;
-			}
-		} else if (widescreenModeInt >= 1 && widescreenModeInt <= 4) {
-			// Manual mode selection
-			mode = static_cast<WidescreenMode>(widescreenModeInt);
-			ratio2D = GetWidescreenRatio2D(mode);
-			
-			if (ApplyWidescreenPatch(base, mode)) {
-				success = true;
-			} else {
-				std::cout << "Failed to apply widescreen patch!" << std::endl;
-			}
-		} else {
-			std::cout << "Warning: Invalid widescreen_mode value (" << widescreenModeInt << "), use 0 for auto-detect or 1-4 for manual mode" << std::endl;
-		}
-		
-		// Only initialize 2D widescreen if the 3D patch was successful
-		if (success) {
-			SetWidescreen2DRatio(ratio2D);
+		if (ApplyWidescreenPatchAuto(base)) {
 			SetWidescreen2DEnabled(true);
 			
 			if (!InitWidescreen2DHook()) {
 				std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
 			}
 			
-			// Start dynamic monitoring if auto-detect was used
-			if (widescreenModeInt == 0 || widescreenModeInt == WIDESCREEN_AUTO) {
-				StartDynamicWidescreenMonitoring(base);
-			}
+			// Always start dynamic monitoring when widescreen is enabled
+			StartDynamicWidescreenMonitoring(base);
+		} else {
+			std::cout << "Widescreen patch initialization failed" << std::endl;
 		}
 	} else {
 		std::cout << "Widescreen patch disabled in settings" << std::endl;
