@@ -1,58 +1,59 @@
-# Chrono Cross - CrossFix
+<img width="500px" alt="image" src="https://github.com/user-attachments/assets/319f1918-8419-4951-b10c-a5a1b6c4f42e" />
 
-Fixes and enhancements for the PC version of Chrono Cross.
+Enhancements for the PC version of Chrono Cross Radical Dreamers Edition.
+Supports the latest Steam release v1.0.1.0
 
 ## Features
 
-- **Widescreen Support** - Play in 16:9, 21:9, or 32:9 aspect ratios
-- **60 FPS Mode** - Unlock the frame rate from 30 to 60 FPS
-- **4K Upscaling** - Render the game at 4K resolution for improved visual quality
-- **Background Play** - Keep the game running when tabbed out
+- **Dynamic Widescreen** - Automatically scales to any aspect ratio (16:9, 21:9, 32:9, etc.)
+- **60 FPS Mode** - Unlock the frame rate to 60 FPS everywhere
+- **4K Upscaling** - High resolution rendering for 3D elements
+- **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 
 ## Todo:
-- Unstretch Menus
-- Unstretch FMVs
+- Unstretch Menus/FMVs/Dialogs
+- PXGP
+- Modding Framework to use mods folder instead of dat/zips
 
 ## Installation
 
 1. Download the latest release
-2. Extract `d3d11.dll` and `settings.ini` to your game folder (where `CHRONOCROSS.exe` is)
+2. Extract `d3d11.dll` to your game folder (where `CHRONOCROSS.exe` is)
 3. Launch the game
+4. (Optional) Edit the `settings.ini` that is automatically generated on first run
 
 ## Settings
 
-Edit `settings.ini` to configure the fixes:
+CrossFix creates a `settings.ini` in your game folder with default values. You can modify it to suit your needs:
 
 ```ini
-# Enable or disable the widescreen patch
-# Must be used with the setting ScreenType: Full
-# 0 = disabled, 1 = enabled
+# Chrono Cross Crossfix Settings
+
+# Enable or disable the dynamic widescreen patch
+# Must be used with the in-game setting ScreenType: Full
 widescreen_enabled=1
 
-# Widescreen aspect ratio mode
-# 0 = 16:9 (standard widescreen)
-# 1 = 21:9 (ultrawide)
-# 2 = 32:9 (super ultrawide)
-widescreen_mode=0
-
 # Enable or disable the double FPS mode
-# Should be used with the slowdown mode (Press F1 in game), Should provide a smooth 60 everywhere
-# Disable if you use another tool like SpecialK
-# 0 = disabled (30 field/60 battle FPS), 1 = enabled (60 FPS everywhere)
-double_fps_mode=0
+# Should be used with the in-game slowdown mode (Press F1)
+double_fps_mode=1
 
 # Disable pause when window loses focus
-# 0 = game pauses when window is inactive (default behavior)
 # 1 = game & music continue running when window is inactive
 disable_pause_on_focus_loss=1
 
 # Enable or disable 4K Upscaling
-# 0 = disabled, 1 = enabled
 upscale_4k=1
 ```
 
 ## Notes
 
-- Back up your game files before using
 - The widescreen fix requires the in-game setting **ScreenType: Full**
-- For 60 FPS, enable the in-game slowdown mode (press F1)
+- For double FPS mode, ensure the in-game slowdown mode is active (press F1). This should activate by default.
+
+
+## Acknowledgements
+
+- [roomviewer-rde](https://github.com/stoofin/roomviewer-rde) - Understanding the BIN format and co-ord system for 2D backdops & layers
+- [SpecialK](https://github.com/SpecialKO/SpecialK) - Existing CC plugin clock tricks & upscaling
+- [Moogles & Mods Discord](https://discord.com/invite/uZXjg55Aa9) - Great resource/hub for CC modding
+- [Duckstation](https://github.com/stenzek/duckstation) - Understanding the PSX rendering & widescreen hack

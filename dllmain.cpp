@@ -44,6 +44,8 @@ DWORD WINAPI MainThread(LPVOID param) {
 	std::cout << std::endl;
 	std::cout << "https://github.com/sp-hy/CrossFix" << std::endl;
 	std::cout << std::endl;
+	std::cout << "For Chrono Cross: Radical Dreamers Edition v.1.0.1.0" << std::endl;
+	std::cout << std::endl;
 #ifdef _DEBUG
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
 #endif
