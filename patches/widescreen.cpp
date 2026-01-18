@@ -206,6 +206,8 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 	uintptr_t base = (uintptr_t)param;
 	uintptr_t resXAddr = base + 0xE2F488;
 	uintptr_t resYAddr = base + 0xE2F48C;
+	uintptr_t screenTypeAddr = base + 0xE2F494;  // Screen type: 0 = normal, 1 = full
+	uintptr_t fmvMenuAddr = base + 0x82F120;     // FMV/Menu flag: 0 = in-game, 1 = FMV/menu
 	
 	// Initialize with current resolution to avoid applying patch on first iteration
 	int lastResX = 0;
@@ -260,12 +262,29 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 					}
 				}
 			}
+			
+			// Force screen type based on widescreen mode and FMV/menu state
+			// This runs every 500ms regardless of resolution changes
+			if (g_wasWidescreen) {
+				// Check if we're in FMV or menu
+				unsigned char fmvMenuFlag = *(unsigned char*)fmvMenuAddr;
+				
+				if (fmvMenuFlag == 1) {
+					// In FMV/menu - force normal screen (0)
+					int screenType = 0;
+					WriteMemory(screenTypeAddr, &screenType, sizeof(int));
+				} else {
+					// In-game with widescreen - force fullscreen (1)
+					int screenType = 1;
+					WriteMemory(screenTypeAddr, &screenType, sizeof(int));
+				}
+			}
 		} catch (...) {
 			// Ignore errors and continue monitoring
 		}
 		
-		// Check every second
-		Sleep(1000);
+		// Check every 100ms
+		Sleep(100);
 	}
 	
 	return 0;

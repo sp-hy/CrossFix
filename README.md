@@ -23,6 +23,10 @@ Supports the latest Steam release v1.0.1.0
 3. Launch the game
 4. (Optional) Edit the `settings.ini` that is automatically generated on first run
 
+Wine/Proton users should use the following:
+`WINEDLLOVERRIDES="dsound=n,b" %command%`
+
+
 ## Settings
 
 CrossFix creates a `settings.ini` in your game folder with default values. You can modify it to suit your needs:
