@@ -2,6 +2,9 @@
 #include <Windows.h>
 #include <d3d11.h>
 
+// Global flag from dllmain.cpp indicating if version check passed
+extern bool g_versionCheckPassed;
+
 // Initialize the D3D11 proxy
 bool InitD3D11Proxy();
 

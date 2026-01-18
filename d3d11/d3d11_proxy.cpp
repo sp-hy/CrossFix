@@ -60,7 +60,10 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, ppDevice, pFeatureLevel, ppImmediateContext);
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
-            ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+            // Only apply patches if version check passed
+            if (g_versionCheckPassed) {
+                ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+            }
         }
         return hr;
     }
@@ -84,7 +87,10 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
-            ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+            // Only apply patches if version check passed
+            if (g_versionCheckPassed) {
+                ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+            }
         }
         return hr;
     }

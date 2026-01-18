@@ -67,6 +67,7 @@
       <EnableUAC>false</EnableUAC>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ModuleDefinitionFile>d3d11\d3d11.def</ModuleDefinitionFile>
+      <AdditionalDependencies>version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release - Proxy|Win32'">
@@ -91,6 +92,7 @@
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <ModuleDefinitionFile>d3d11\d3d11.def</ModuleDefinitionFile>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <AdditionalDependencies>version.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -103,6 +105,7 @@
     <ClCompile Include="patches\upscale4k.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
+    <ClCompile Include="utils\version.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include=".gitignore" />
@@ -117,6 +120,7 @@
     <ClInclude Include="patches\upscale4k.h" />
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
+    <ClInclude Include="utils\version.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
