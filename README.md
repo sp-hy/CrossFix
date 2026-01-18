@@ -12,7 +12,7 @@ Supports the latest Steam release v1.0.1.0
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 
 ## Todo:
-- Unstretch Menus/FMVs/Dialogs
+- Unstretch Dialogs
 - PXGP
 - Modding Framework to use mods folder instead of dat/zips
 
@@ -24,7 +24,7 @@ Supports the latest Steam release v1.0.1.0
 4. (Optional) Edit the `settings.ini` that is automatically generated on first run
 
 Wine/Proton users should use the following:
-`WINEDLLOVERRIDES="dsound=n,b" %command%`
+`WINEDLLOVERRIDES="d3d11=n,b" %command%`
 
 
 ## Settings

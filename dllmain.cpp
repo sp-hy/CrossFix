@@ -42,9 +42,9 @@ DWORD WINAPI MainThread(LPVOID param) {
 	FILE* f;
 	freopen_s(&f, "CONOUT$", "w", stdout);
 
-	std::cout << "CrossFix - v0.3" << std::endl;
+	std::cout << "CrossFix - v0.4" << std::endl;
 	std::cout << std::endl;
-	std::cout << "https://github.com/sp-hy/CrossFix" << std::endl;
+	std::cout << "https://github.com/sp-hy/CrossFix || https://www.nexusmods.com/chronocrosstheradicaldreamersedition/mods/77" << std::endl;
 	std::cout << std::endl;
 
 	// Check executable version
