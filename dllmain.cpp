@@ -21,7 +21,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 
 	char exePath[MAX_PATH];
 	if (GetModuleFileNameA(NULL, exePath, MAX_PATH) == 0) {
-		FreeLibraryAndExitThread((HMODULE)param, 0);
 		return 0;
 	}
 
@@ -36,7 +35,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 	std::transform(exeNameLower.begin(), exeNameLower.end(), exeNameLower.begin(), ::tolower);
 
 	if (exeNameLower != "chronocross.exe") {
-		FreeLibraryAndExitThread((HMODULE)param, 0);
 		return 0;
 	}
 
