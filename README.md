@@ -1,6 +1,7 @@
 <img width="500px" alt="image" src="https://github.com/user-attachments/assets/319f1918-8419-4951-b10c-a5a1b6c4f42e" />
 
 Enhancements for the PC version of Chrono Cross Radical Dreamers Edition.
+
 Supports the latest Steam release v1.0.1.0
 
 ## Features

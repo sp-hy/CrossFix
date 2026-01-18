@@ -207,8 +207,22 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 	uintptr_t resXAddr = base + 0xE2F488;
 	uintptr_t resYAddr = base + 0xE2F48C;
 	
+	// Initialize with current resolution to avoid applying patch on first iteration
 	int lastResX = 0;
 	int lastResY = 0;
+	float lastAspectRatio = 0.0f;
+	
+	// Read initial resolution
+	try {
+		lastResX = *(int*)resXAddr;
+		lastResY = *(int*)resYAddr;
+		if (lastResX > 0 && lastResY > 0) {
+			lastAspectRatio = (float)lastResX / (float)lastResY;
+			g_lastAspectRatio = lastAspectRatio;
+		}
+	} catch (...) {
+		// If we can't read initial resolution, start with 0
+	}
 	
 	while (g_monitoringActive) {
 		try {
@@ -224,6 +238,11 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				float aspectRatio = (float)resX / (float)resY;
 				bool isWidescreen = aspectRatio >= 1.4f;
 				
+				// Only apply patch if aspect ratio has actually changed
+				bool aspectRatioChanged = (aspectRatio != lastAspectRatio);
+				lastAspectRatio = aspectRatio;
+				g_lastAspectRatio = aspectRatio;
+				
 				if (!isWidescreen && g_wasWidescreen) {
 					// Switch from widescreen to 4:3
 					std::cout << "Resolution changed to " << resX << "x" << resY 
@@ -231,7 +250,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 					std::cout << "Switching to default 4:3 behavior" << std::endl;
 					
 					RestoreDefaultBehavior(base);
-				} else if (isWidescreen) {
+				} else if (isWidescreen && aspectRatioChanged) {
 					// We just need to update the ratio, ApplyWidescreenPatch handles everything
 					if (ApplyWidescreenPatch(base, aspectRatio)) {
 						if (!g_wasWidescreen) {
