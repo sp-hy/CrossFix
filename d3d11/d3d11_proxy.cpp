@@ -2,6 +2,7 @@
 #include <string>
 #include <iostream>
 #include "../patches/upscale4k.h"
+#include "../patches/textureresize.h"
 
 static HMODULE g_hD3D11 = nullptr;
 
@@ -62,6 +63,9 @@ extern "C" {
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
             // Only apply patches if version check passed
             if (g_versionCheckPassed) {
+                // Apply resize hooks FIRST, then upscale hooks
+                // This ensures the hook chain is correct
+                ApplyTextureResizeHooks(*ppDevice);
                 ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
             }
         }
@@ -89,6 +93,8 @@ extern "C" {
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
             // Only apply patches if version check passed
             if (g_versionCheckPassed) {
+                // Apply resize hooks FIRST, then upscale hooks
+                ApplyTextureResizeHooks(*ppDevice);
                 ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
             }
         }

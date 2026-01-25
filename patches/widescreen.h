@@ -16,3 +16,6 @@ void StopDynamicWidescreenMonitoring();
 
 // Restore default (non-widescreen) behavior
 bool RestoreDefaultBehavior(uintptr_t base);
+
+// Get the current widescreen ratio (for texture resizing, etc.)
+float GetCurrentWidescreenRatio();

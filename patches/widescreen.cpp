@@ -271,7 +271,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				
 				if (fmvMenuFlag == 1) {
 					// In FMV/menu - force normal screen (0)
-					int screenType = 0;
+					int screenType = 1;
 					WriteMemory(screenTypeAddr, &screenType, sizeof(int));
 				} else {
 					// In-game with widescreen - force fullscreen (1)
@@ -322,4 +322,9 @@ void StopDynamicWidescreenMonitoring() {
 	}
 	
 	std::cout << "Dynamic widescreen monitoring stopped" << std::endl;
+}
+
+// Get the current widescreen ratio
+float GetCurrentWidescreenRatio() {
+	return g_widescreenRatio3D;
 }

@@ -128,7 +128,11 @@ bool Settings::SaveDefault(const std::string& filename) {
     file << "disable_pause_on_focus_loss=1" << std::endl << std::endl;
     file << "# Enable or disable 4K Upscaling" << std::endl;
     file << "# 0 = disabled, 1 = enabled" << std::endl;
-    file << "upscale_4k=1" << std::endl;
+    file << "upscale_4k=1" << std::endl << std::endl;
+    file << "# Enable or disable texture dumping" << std::endl;
+    file << "# Dumps textures to /dump/ directory with hash-based filenames" << std::endl;
+    file << "# 0 = disabled, 1 = enabled" << std::endl;
+    file << "texture_dump_enabled=0" << std::endl;
 
     file.close();
     return true;

@@ -2,6 +2,7 @@
 
 #define NOMINMAX
 #include "upscale4k.h"
+#include "texturedump.h"
 #include <Windows.h>
 #include <algorithm>
 #include <iostream>
@@ -25,6 +26,11 @@ namespace {
     RSSetViewports_t Original_RSSetViewports = nullptr;
     CopySubresourceRegion_t Original_CopySubresourceRegion = nullptr;
     CreateTexture2D_t Original_CreateTexture2D = nullptr;
+    
+    // Ready flags to prevent race conditions during hook installation
+    volatile bool g_viewportsHookReady = false;
+    volatile bool g_copyHookReady = false;
+    volatile bool g_createTextureHookReady = false;
 
     // Helper: Check if format is a color render target format
     inline bool IsColorFormat(DXGI_FORMAT format) {
@@ -38,6 +44,10 @@ namespace {
 }
 
 void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT NumViewports, const D3D11_VIEWPORT* pViewports) {
+    if (!g_viewportsHookReady || !Original_RSSetViewports) {
+        return; // Not ready yet
+    }
+    
     if (NumViewports == 1 && pViewports) {
         ID3D11RenderTargetView* rtv = nullptr;
         This->OMGetRenderTargets(1, &rtv, nullptr);
@@ -89,6 +99,10 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
 }
 
 void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const D3D11_BOX* pSrcBox, BOOL bWrapped) {
+    if (!g_copyHookReady || !Original_CopySubresourceRegion) {
+        return; // Not ready yet
+    }
+    
     D3D11_BOX newBox = {};
     const D3D11_BOX* pActualSrcBox = pSrcBox;
     UINT ActualDstX = DstX;
@@ -146,17 +160,38 @@ void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, I
 }
 
 HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(ID3D11Device* This, const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) {
+    if (!g_createTextureHookReady || !Original_CreateTexture2D) {
+        return E_FAIL; // Not ready yet
+    }
+    
+    HRESULT hr;
+    const D3D11_TEXTURE2D_DESC* actualDesc = pDesc;
+    D3D11_TEXTURE2D_DESC newDesc;
+    
     if (pDesc && pDesc->Width == (UINT)BaseWidth && pDesc->Height == (UINT)BaseHeight && 
         (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) && IsColorFormat(pDesc->Format) && !pInitialData) {
         
-        D3D11_TEXTURE2D_DESC newDesc = *pDesc;
+        newDesc = *pDesc;
         newDesc.Width = (UINT)NewWidth;
         newDesc.Height = (UINT)NewHeight;
+        actualDesc = &newDesc;
         
-        return Original_CreateTexture2D(This, &newDesc, pInitialData, ppTexture2D);
+        hr = Original_CreateTexture2D(This, &newDesc, pInitialData, ppTexture2D);
+    } else {
+        hr = Original_CreateTexture2D(This, pDesc, pInitialData, ppTexture2D);
     }
     
-    return Original_CreateTexture2D(This, pDesc, pInitialData, ppTexture2D);
+    // Dump texture if creation succeeded
+    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && actualDesc) {
+        ID3D11DeviceContext* pContext = nullptr;
+        This->GetImmediateContext(&pContext);
+        if (pContext) {
+            DumpTexture2D(This, pContext, *ppTexture2D, actualDesc, pInitialData);
+            pContext->Release();
+        }
+    }
+    
+    return hr;
 }
 
 void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
@@ -192,11 +227,15 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
         if (contextVtable[44] != (void*)Hooked_RSSetViewports) {
             Original_RSSetViewports = (RSSetViewports_t)contextVtable[44];
             contextVtable[44] = (void*)Hooked_RSSetViewports;
+            FlushInstructionCache(GetCurrentProcess(), &contextVtable[44], sizeof(void*));
+            g_viewportsHookReady = true;
         }
 
         if (contextVtable[46] != (void*)Hooked_CopySubresourceRegion) {
             Original_CopySubresourceRegion = (CopySubresourceRegion_t)contextVtable[46];
             contextVtable[46] = (void*)Hooked_CopySubresourceRegion;
+            FlushInstructionCache(GetCurrentProcess(), &contextVtable[46], sizeof(void*));
+            g_copyHookReady = true;
         }
 
         VirtualProtect(contextVtable, sizeof(void*) * 50, oldProtect, &oldProtect);
@@ -207,6 +246,8 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
         if (deviceVtable[5] != (void*)Hooked_CreateTexture2D) {
             Original_CreateTexture2D = (CreateTexture2D_t)deviceVtable[5];
             deviceVtable[5] = (void*)Hooked_CreateTexture2D;
+            FlushInstructionCache(GetCurrentProcess(), &deviceVtable[5], sizeof(void*));
+            g_createTextureHookReady = true;
         }
         
         VirtualProtect(deviceVtable, sizeof(void*) * 10, oldProtect, &oldProtect);
