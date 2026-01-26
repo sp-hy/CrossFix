@@ -1,5 +1,7 @@
 #include "widescreen.h"
 #include "widescreen2d.h"
+#include "dialog.h"
+#include "battle.h"
 #include <iostream>
 
 // Dynamic monitoring state
@@ -209,12 +211,17 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 	uintptr_t screenTypeAddr = base + 0xE2F494;  // Screen type: 0 = normal, 1 = full
 	uintptr_t fmvMenuAddr = base + 0x82F120;     // FMV/Menu flag: 0 = in-game, 1 = FMV/menu
 	
-	// Initialize with current resolution to avoid applying patch on first iteration
+	// Initialize state
 	int lastResX = 0;
 	int lastResY = 0;
 	float lastAspectRatio = 0.0f;
 	
-	// Read initial resolution
+	// FMV/Menu flag stability buffer
+	unsigned char lastReadFmvMenuFlag = 0xFF;
+	int fmvMenuStabilityCounter = 0;
+	unsigned char confirmedFmvMenuFlag = 0xFF;
+
+	// Read initial values
 	try {
 		lastResX = *(int*)resXAddr;
 		lastResY = *(int*)resYAddr;
@@ -222,8 +229,12 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 			lastAspectRatio = (float)lastResX / (float)lastResY;
 			g_lastAspectRatio = lastAspectRatio;
 		}
+
+		unsigned char initialFlag = *(unsigned char*)fmvMenuAddr;
+		lastReadFmvMenuFlag = initialFlag;
+		confirmedFmvMenuFlag = initialFlag;
 	} catch (...) {
-		// If we can't read initial resolution, start with 0
+		// If we can't read initial values, start with defaults
 	}
 	
 	while (g_monitoringActive) {
@@ -263,28 +274,37 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				}
 			}
 			
-			// Force screen type based on widescreen mode and FMV/menu state
-			// This runs every 500ms regardless of resolution changes
+			// Update FMV/Menu flag stability logic
+			unsigned char currentFmvMenuFlag = *(unsigned char*)fmvMenuAddr;
+			if (currentFmvMenuFlag == lastReadFmvMenuFlag) {
+				fmvMenuStabilityCounter++;
+				if (fmvMenuStabilityCounter >= 5) { // Held for 250ms (5 * 50ms)
+					confirmedFmvMenuFlag = currentFmvMenuFlag;
+				}
+			} else {
+				lastReadFmvMenuFlag = currentFmvMenuFlag;
+				fmvMenuStabilityCounter = 0;
+			}
+
+			// Force screen type based on widescreen mode and stabilized FMV/menu state
 			if (g_wasWidescreen) {
-				// Check if we're in FMV or menu
-				unsigned char fmvMenuFlag = *(unsigned char*)fmvMenuAddr;
-				
-				if (fmvMenuFlag == 1) {
-					// In FMV/menu - force normal screen (0)
-					int screenType = 0;
-					WriteMemory(screenTypeAddr, &screenType, sizeof(int));
-				} else {
-					// In-game with widescreen - force fullscreen (1)
-					int screenType = 1;
-					WriteMemory(screenTypeAddr, &screenType, sizeof(int));
+				int targetScreenType = (confirmedFmvMenuFlag == 1) ? 0 : 1;
+				int currentScreenType = *(int*)screenTypeAddr;
+
+				// Only write if the value is different to avoid flickering/unnecessary writes
+				if (currentScreenType != targetScreenType) {
+					WriteMemory(screenTypeAddr, &targetScreenType, sizeof(int));
 				}
 			}
+
+			// Update dialog values using the confirmed (stabilized) flag and battle status
+			UpdateDialogValues(g_lastAspectRatio, (confirmedFmvMenuFlag == 1), IsInBattle());
 		} catch (...) {
 			// Ignore errors and continue monitoring
 		}
 		
 		// Check every 100ms
-		Sleep(100);
+		Sleep(50);
 	}
 	
 	return 0;

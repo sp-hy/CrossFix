@@ -432,6 +432,8 @@ void DumpTexture2D(ID3D11Device* pDevice, ID3D11DeviceContext* pContext, ID3D11T
 namespace {
     // List of texture hashes that should be resized based on widescreen ratio
     std::unordered_set<uint64_t> g_resizeHashes;
+    // List of texture sizes (Width, Height) that should be resized
+    std::set<std::pair<UINT, UINT>> g_resizeSizes;
     bool g_resizeHashesInitialized = false;
     
     // Initialize the resize hash list with known textures
@@ -441,12 +443,22 @@ namespace {
         
         // Example: texture_4f83cf6716f5f0c5_120x120_BGRA8.dds
         // This hash is from the filename - you can add more hashes here
-        g_resizeHashes.insert(0x4f83cf6716f5f0c5ULL);
+
+        g_resizeHashes.insert(0x7ce77567d5bfe806ULL); // Main Logo
+        g_resizeHashes.insert(0x8644d7078f6ac7b0ULL); // Menu Element
         
-        // Add more texture hashes here as needed
-        // g_resizeHashes.insert(0xANOTHERHASHHERE);
+        // Whitelist specific sizes
+        g_resizeSizes.insert({ 480, 64 });
+        g_resizeSizes.insert({ 256, 192 });
+        g_resizeSizes.insert({ 250, 45 });
+        g_resizeSizes.insert({ 208, 112 });
+        g_resizeSizes.insert({ 608, 224 });
+        g_resizeSizes.insert({ 384, 192 });
+        g_resizeSizes.insert({ 512, 64 });
+        g_resizeSizes.insert({ 800, 88 });
+
         
-        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes" << std::endl;
+        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes and " << g_resizeSizes.size() << " sizes" << std::endl;
     }
 }
 
@@ -473,14 +485,6 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
         return false;
     }
     
-    // TEST: Resize all textures larger than 10x10
-    if (pDesc->Width > 10 && pDesc->Height > 10) {
-        // return true;
-    }
-    
-    return false;
-    
-    /* Original hash-based code:
     // Validate texture dimensions
     if (pDesc->Width == 0 || pDesc->Height == 0 || pDesc->Width > 16384 || pDesc->Height > 16384) {
         return false;
@@ -489,19 +493,24 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
     try {
         InitializeResizeHashes();
         
-        // If no hashes are registered, don't resize anything
-        if (g_resizeHashes.empty()) return false;
+        // 1. Check if this size is explicitly whitelisted
+        if (g_resizeSizes.find({pDesc->Width, pDesc->Height}) != g_resizeSizes.end()) {
+            return true;
+        }
         
-        // Calculate the texture hash
-        uint64_t hash = HashTexture(pDesc, pInitialData);
+        // 2. If size didn't match, check if this specific hash is whitelisted
+        if (!g_resizeHashes.empty()) {
+            uint64_t hash = HashTexture(pDesc, pInitialData);
+            if (g_resizeHashes.find(hash) != g_resizeHashes.end()) {
+                return true;
+            }
+        }
         
-        // Check if this hash is in our resize list
-        return g_resizeHashes.find(hash) != g_resizeHashes.end();
+        return false;
     } catch (...) {
         // If anything fails, don't resize
         return false;
     }
-    */
 }
 
 // Resize texture content by adding pillarboxing (empty space on sides)

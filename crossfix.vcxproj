@@ -105,6 +105,8 @@
     <ClCompile Include="patches\upscale4k.cpp" />
     <ClCompile Include="patches\texturedump.cpp" />
     <ClCompile Include="patches\textureresize.cpp" />
+    <ClCompile Include="patches\dialog.cpp" />
+    <ClCompile Include="patches\battle.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
     <ClCompile Include="utils\version.cpp" />
@@ -122,6 +124,8 @@
     <ClInclude Include="patches\upscale4k.h" />
     <ClInclude Include="patches\texturedump.h" />
     <ClInclude Include="patches\textureresize.h" />
+    <ClInclude Include="patches\dialog.h" />
+    <ClInclude Include="patches\battle.h" />
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
     <ClInclude Include="utils\version.h" />

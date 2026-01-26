@@ -8,6 +8,8 @@
 #include "d3d11/d3d11_proxy.h"
 #include "patches/fps.h"
 #include "patches/pausefix.h"
+#include "patches/dialog.h"
+#include "patches/battle.h"
 #include "utils/settings.h"
 #include "utils/version.h"
 
@@ -42,7 +44,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 	FILE* f;
 	freopen_s(&f, "CONOUT$", "w", stdout);
 
-	std::cout << "CrossFix - v0.4" << std::endl;
+	std::cout << "CrossFix - v0.5" << std::endl;
 	std::cout << std::endl;
 	std::cout << "https://github.com/sp-hy/CrossFix || https://www.nexusmods.com/chronocrosstheradicaldreamersedition/mods/77" << std::endl;
 	std::cout << std::endl;
@@ -83,22 +85,27 @@ DWORD WINAPI MainThread(LPVOID param) {
 	bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
 
 	if (widescreenEnabled) {
-		std::cout << "Initializing dynamic widescreen patch..." << std::endl;
+		std::cout << "Initializing dynamic widescreen patch system..." << std::endl;
 		
-		if (ApplyWidescreenPatchAuto(base)) {
-			SetWidescreen2DEnabled(true);
-			
-			if (!InitWidescreen2DHook()) {
-				std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
-			}
-			
-			// Always start dynamic monitoring when widescreen is enabled
-			StartDynamicWidescreenMonitoring(base);
+		// Try to apply initial widescreen patch (3D)
+		if (!ApplyWidescreenPatchAuto(base)) {
+			std::cout << "Initial aspect ratio is not widescreen or detection failed. Monitoring for changes..." << std::endl;
 		} else {
-			std::cout << "Widescreen patch initialization failed" << std::endl;
+			SetWidescreen2DEnabled(true);
 		}
+
+		// Always initialize 2D and dialog patches if widescreen features are enabled
+		if (!InitWidescreen2DHook()) {
+			std::cout << "Failed to initialize 2D widescreen ASM hook!" << std::endl;
+		}
+		
+		ApplyDialogPatch(base);
+		ApplyBattlePatch(base);
+		
+		// Always start dynamic monitoring to handle resolution changes and FMV/menu state
+		StartDynamicWidescreenMonitoring(base);
 	} else {
-		std::cout << "Widescreen patch disabled in settings" << std::endl;
+		std::cout << "Widescreen patches disabled in settings" << std::endl;
 	}
 
 	if (settings.GetBool("double_fps_mode", false)) {
