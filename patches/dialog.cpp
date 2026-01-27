@@ -136,10 +136,10 @@ bool ApplyDialogPatch(uintptr_t base) {
 	return success;
 }
 
-void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
+void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 	const float BASE_ASPECT = 4.0f / 3.0f;
 
-	if (isInFmvMenu || aspectRatio < 1.4f) {
+	if (aspectRatio < 1.4f) {
 		// Reset to 4:3 defaults
 		if (g_xScale != 1.0f || g_letterSpacing != 640.0f || g_dialogBoxWidth != 6.0f || 
 			g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
@@ -153,7 +153,7 @@ void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
 			WriteMemory(g_cursorWidthAddr, &g_lastCursorWidth, sizeof(float));
 
 #ifdef _DEBUG
-			std::cout << "Dialog values restored to default (FMV/Menu or 4:3)" << std::endl;
+			std::cout << "Dialog values restored to default (4:3)" << std::endl;
 #endif
 		}
 	} else {

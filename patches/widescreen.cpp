@@ -209,17 +209,11 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 	uintptr_t resXAddr = base + 0xE2F488;
 	uintptr_t resYAddr = base + 0xE2F48C;
 	uintptr_t screenTypeAddr = base + 0xE2F494;  // Screen type: 0 = normal, 1 = full
-	uintptr_t fmvMenuAddr = base + 0x82F120;     // FMV/Menu flag: 0 = in-game, 1 = FMV/menu
 	
 	// Initialize state
 	int lastResX = 0;
 	int lastResY = 0;
 	float lastAspectRatio = 0.0f;
-	
-	// FMV/Menu flag stability buffer
-	unsigned char lastReadFmvMenuFlag = 0xFF;
-	int fmvMenuStabilityCounter = 0;
-	unsigned char confirmedFmvMenuFlag = 0xFF;
 
 	// Read initial values
 	try {
@@ -229,10 +223,6 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 			lastAspectRatio = (float)lastResX / (float)lastResY;
 			g_lastAspectRatio = lastAspectRatio;
 		}
-
-		unsigned char initialFlag = *(unsigned char*)fmvMenuAddr;
-		lastReadFmvMenuFlag = initialFlag;
-		confirmedFmvMenuFlag = initialFlag;
 	} catch (...) {
 		// If we can't read initial values, start with defaults
 	}
@@ -273,37 +263,23 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 					}
 				}
 			}
-			
-			// Update FMV/Menu flag stability logic
-			unsigned char currentFmvMenuFlag = *(unsigned char*)fmvMenuAddr;
-			if (currentFmvMenuFlag == lastReadFmvMenuFlag) {
-				fmvMenuStabilityCounter++;
-				if (fmvMenuStabilityCounter >= 5) { // Held for 250ms (5 * 50ms)
-					confirmedFmvMenuFlag = currentFmvMenuFlag;
-				}
-			} else {
-				lastReadFmvMenuFlag = currentFmvMenuFlag;
-				fmvMenuStabilityCounter = 0;
-			}
 
-			// Force screen type based on widescreen mode and stabilized FMV/menu state
+			// Force screen type to full (1) when in widescreen mode
 			if (g_wasWidescreen) {
-				int targetScreenType = (confirmedFmvMenuFlag == 1) ? 0 : 1;
+				int targetScreenType = 1;
 				int currentScreenType = *(int*)screenTypeAddr;
-
-				// Only write if the value is different to avoid flickering/unnecessary writes
 				if (currentScreenType != targetScreenType) {
 					WriteMemory(screenTypeAddr, &targetScreenType, sizeof(int));
 				}
 			}
 
-			// Update dialog values using the confirmed (stabilized) flag and battle status
-			UpdateDialogValues(g_lastAspectRatio, (confirmedFmvMenuFlag == 1), IsInBattle());
+			// Update dialog values based on aspect ratio and battle status
+			UpdateDialogValues(g_lastAspectRatio, IsInBattle());
 		} catch (...) {
 			// Ignore errors and continue monitoring
 		}
 		
-		// Check every 100ms
+		// Check every 50ms
 		Sleep(50);
 	}
 	

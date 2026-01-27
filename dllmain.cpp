@@ -102,7 +102,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 		ApplyDialogPatch(base);
 		ApplyBattlePatch(base);
 		
-		// Always start dynamic monitoring to handle resolution changes and FMV/menu state
+		// Always start dynamic monitoring to handle resolution changes
 		StartDynamicWidescreenMonitoring(base);
 	} else {
 		std::cout << "Widescreen patches disabled in settings" << std::endl;

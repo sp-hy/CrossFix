@@ -58,6 +58,9 @@ namespace {
                     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
                         bytesPerPixel = 4;
                         break;
+                    case DXGI_FORMAT_B4G4R4A4_UNORM:
+                        bytesPerPixel = 2;
+                        break;
                     case DXGI_FORMAT_R16G16B16A16_FLOAT:
                         bytesPerPixel = 8;
                         break;
@@ -86,7 +89,60 @@ namespace {
         return hash;
     }
 
-    // Initialize dump directory
+    // Get format folder name
+    std::string GetFormatFolderName(DXGI_FORMAT format) {
+        switch (format) {
+            case DXGI_FORMAT_B4G4R4A4_UNORM:
+                return "BGRA4";
+            case DXGI_FORMAT_B8G8R8A8_UNORM:
+            case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                return "BGRA8";
+            case DXGI_FORMAT_R8G8B8A8_UNORM:
+            case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+                return "RGBA8";
+            default:
+                return "other";
+        }
+    }
+
+    // Check if texture is fully transparent (all alpha values are 0)
+    bool IsFullyTransparent(const void* pData, UINT width, UINT height, UINT rowPitch, DXGI_FORMAT format) {
+        if (!pData || width == 0 || height == 0) return false;
+        
+        const uint8_t* bytes = static_cast<const uint8_t*>(pData);
+        
+        switch (format) {
+            case DXGI_FORMAT_R8G8B8A8_UNORM:
+            case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            case DXGI_FORMAT_B8G8R8A8_UNORM:
+            case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                // 32-bit RGBA/BGRA - alpha is in the 4th byte of each pixel
+                for (UINT y = 0; y < height; ++y) {
+                    const uint8_t* row = bytes + y * rowPitch;
+                    for (UINT x = 0; x < width; ++x) {
+                        if (row[x * 4 + 3] != 0) return false; // Check alpha byte
+                    }
+                }
+                return true;
+                
+            case DXGI_FORMAT_B4G4R4A4_UNORM:
+                // 16-bit BGRA4 - alpha is in the high 4 bits of the high byte
+                for (UINT y = 0; y < height; ++y) {
+                    const uint8_t* row = bytes + y * rowPitch;
+                    for (UINT x = 0; x < width; ++x) {
+                        uint16_t pixel = *reinterpret_cast<const uint16_t*>(row + x * 2);
+                        uint8_t alpha = (pixel >> 12) & 0xF; // High 4 bits
+                        if (alpha != 0) return false;
+                    }
+                }
+                return true;
+                
+            default:
+                return false; // Can't determine transparency for other formats
+        }
+    }
+
+    // Initialize dump directory with subdirectories
     void InitializeDumpPath() {
         if (!g_dumpPath.empty()) return;
         
@@ -103,8 +159,13 @@ namespace {
             g_dumpPath = "dump";
         }
         
-        // Create directory if it doesn't exist
+        // Create main directory and subdirectories
         CreateDirectoryA(g_dumpPath.c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BGRA4").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BGRA8").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\RGBA8").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\transparent").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\other").c_str(), NULL);
     }
 
     // Check if format is dumpable
@@ -114,6 +175,7 @@ namespace {
             case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
             case DXGI_FORMAT_B8G8R8A8_UNORM:
             case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+            case DXGI_FORMAT_B4G4R4A4_UNORM:
             case DXGI_FORMAT_R8_UNORM:
             case DXGI_FORMAT_R8G8_UNORM:
                 return true;
@@ -122,8 +184,9 @@ namespace {
         }
     }
 
-    // Save texture as DDS
-    bool SaveTextureAsDDS(ID3D11Texture2D* pTexture, const D3D11_TEXTURE2D_DESC* pDesc, const std::string& filepath) {
+    // Save texture as DDS, returns transparency status via out parameter
+    bool SaveTextureAsDDS(ID3D11Texture2D* pTexture, const D3D11_TEXTURE2D_DESC* pDesc, const std::string& filepath, bool* pIsTransparent = nullptr) {
+        if (pIsTransparent) *pIsTransparent = false;
         if (!pTexture || !pDesc) return false;
         
         // Skip if format is not dumpable
@@ -175,6 +238,11 @@ namespace {
         if (FAILED(hr) || !mapped.pData) {
             pStaging.Reset();
             return false;
+        }
+        
+        // Check if texture is fully transparent
+        if (pIsTransparent) {
+            *pIsTransparent = IsFullyTransparent(mapped.pData, pDesc->Width, pDesc->Height, mapped.RowPitch, pDesc->Format);
         }
         
         // Write simple DDS file
@@ -241,6 +309,14 @@ namespace {
                 ddsHeader.ddspf.dwBBitMask = 0x000000FF;
                 ddsHeader.ddspf.dwABitMask = 0xFF000000;
                 break;
+            case DXGI_FORMAT_B4G4R4A4_UNORM:
+                ddsHeader.ddspf.dwFlags = 0x40 | 0x1; // DDPF_RGB | DDPF_ALPHAPIXELS
+                ddsHeader.ddspf.dwRGBBitCount = 16;
+                ddsHeader.ddspf.dwRBitMask = 0x0F00; // BGRA4: B=0x000F, G=0x00F0, R=0x0F00, A=0xF000
+                ddsHeader.ddspf.dwGBitMask = 0x00F0;
+                ddsHeader.ddspf.dwBBitMask = 0x000F;
+                ddsHeader.ddspf.dwABitMask = 0xF000;
+                break;
             case DXGI_FORMAT_R8_UNORM:
                 ddsHeader.ddspf.dwFlags = 0x40; // DDPF_RGB
                 ddsHeader.ddspf.dwRGBBitCount = 8;
@@ -275,6 +351,7 @@ namespace {
             case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
                 bytesPerPixel = 4;
                 break;
+            case DXGI_FORMAT_B4G4R4A4_UNORM:
             case DXGI_FORMAT_R8G8_UNORM:
                 bytesPerPixel = 2;
                 break;
@@ -357,56 +434,53 @@ void DumpTexture2D(ID3D11Device* pDevice, ID3D11DeviceContext* pContext, ID3D11T
         return; // Recently dumped, skip
     }
     
-    // Generate filename
+    // Determine format folder
+    std::string formatFolder = GetFormatFolderName(pDesc->Format);
+    
+    // Generate filename with decimal size first: WIDTHxHEIGHT_HASH.dds
     std::ostringstream filename;
-    filename << g_dumpPath << "\\texture_" 
-             << std::hex << std::setfill('0') << std::setw(16) << hash
-             << "_" << pDesc->Width << "x" << pDesc->Height;
+    filename << std::dec << pDesc->Width << "x" << pDesc->Height 
+             << "_" << std::hex << std::setfill('0') << std::setw(16) << hash
+             << ".dds";
     
-    // Add format info to filename
-    switch (pDesc->Format) {
-        case DXGI_FORMAT_R8G8B8A8_UNORM:
-            filename << "_RGBA8";
-            break;
-        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-            filename << "_RGBA8_SRGB";
-            break;
-        case DXGI_FORMAT_B8G8R8A8_UNORM:
-            filename << "_BGRA8";
-            break;
-        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-            filename << "_BGRA8_SRGB";
-            break;
-        case DXGI_FORMAT_R16G16B16A16_FLOAT:
-            filename << "_RGBA16F";
-            break;
-        default:
-            filename << "_FMT" << (int)pDesc->Format;
-            break;
-    }
+    std::string filenameStr = filename.str();
     
-    filename << ".dds";
+    // Build temp filepath (we'll move to final location after checking transparency)
+    std::string tempPath = g_dumpPath + "\\" + formatFolder + "\\" + filenameStr;
     
-    std::string filepath = filename.str();
-    
-    // Check if file already exists (cache hit) - use try-catch for safety
-    try {
-        std::ifstream testFile(filepath, std::ios::binary);
-        if (testFile.good()) {
+    // Check if file already exists in any folder (cache hit)
+    std::vector<std::string> foldersToCheck = {"BGRA4", "BGRA8", "RGBA8", "transparent", "other"};
+    for (const auto& folder : foldersToCheck) {
+        std::string checkPath = g_dumpPath + "\\" + folder + "\\" + filenameStr;
+        try {
+            std::ifstream testFile(checkPath, std::ios::binary);
+            if (testFile.good()) {
+                testFile.close();
+                InterlockedExchange(&g_dumpInProgress, 0);
+                return; // Already dumped
+            }
             testFile.close();
-            InterlockedExchange(&g_dumpInProgress, 0);
-            return; // Already dumped
+        } catch (...) {
+            // Continue checking
         }
-        testFile.close();
-    } catch (...) {
-        // If file check fails, continue anyway
     }
     
     // Save texture - wrap in try-catch to prevent crashes
     bool dumped = false;
+    bool isTransparent = false;
     try {
-        if (SaveTextureAsDDS(pTexture, pDesc, filepath)) {
-            std::cout << "Dumped texture: " << filepath << std::endl;
+        if (SaveTextureAsDDS(pTexture, pDesc, tempPath, &isTransparent)) {
+            // If fully transparent, move to transparent folder
+            if (isTransparent) {
+                std::string finalPath = g_dumpPath + "\\transparent\\" + filenameStr;
+                // Delete from temp location and write to transparent folder
+                if (tempPath != finalPath) {
+                    MoveFileA(tempPath.c_str(), finalPath.c_str());
+                    std::cout << "Dumped transparent texture: " << finalPath << std::endl;
+                }
+            } else {
+                std::cout << "Dumped texture: " << tempPath << std::endl;
+            }
             dumped = true;
         }
     } catch (...) {
@@ -445,17 +519,22 @@ namespace {
         // This hash is from the filename - you can add more hashes here
 
         g_resizeHashes.insert(0x7ce77567d5bfe806ULL); // Main Logo
-        g_resizeHashes.insert(0x8644d7078f6ac7b0ULL); // Menu Element
-        
-        // Whitelist specific sizes
-        g_resizeSizes.insert({ 480, 64 });
-        g_resizeSizes.insert({ 256, 192 });
-        g_resizeSizes.insert({ 250, 45 });
-        g_resizeSizes.insert({ 208, 112 });
-        g_resizeSizes.insert({ 608, 224 });
-        g_resizeSizes.insert({ 384, 192 });
-        g_resizeSizes.insert({ 512, 64 });
-        g_resizeSizes.insert({ 800, 88 });
+
+
+        g_resizeSizes.insert({ 1024, 1024 });        // Key Items
+        g_resizeSizes.insert({ 512, 512 });        // Key Items
+        g_resizeSizes.insert({ 512, 896 });        // Menu portraits (menu)
+        g_resizeSizes.insert({ 256, 1792 });        // Menu portraits (post battle)
+        g_resizeSizes.insert({ 1164, 1166 });        // Menu compass
+        g_resizeSizes.insert({ 405, 58 });        // Menu compass arrow
+        g_resizeSizes.insert({ 250, 45 });        // Battle hit chance anchor
+        g_resizeSizes.insert({ 128, 128 }); // Menu mini avatar
+        g_resizeSizes.insert({ 92, 44 });        // menu arrows
+        // g_resizeSizes.insert({ 480, 64 }); // Battle element name container
+        // g_resizeSizes.insert({ 736, 96 }); // Battle element name menu?
+        // g_resizeSizes.insert({ 64, 32 }); // Battle element mini
+
+
 
         
         std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes and " << g_resizeSizes.size() << " sizes" << std::endl;

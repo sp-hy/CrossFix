@@ -38,6 +38,21 @@ namespace {
     }
 }
 
+// Get bytes per pixel for supported formats
+UINT GetBytesPerPixel(DXGI_FORMAT format) {
+    switch (format) {
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+            return 4;
+        case DXGI_FORMAT_B4G4R4A4_UNORM:
+            return 2;
+        default:
+            return 4; // Default assumption
+    }
+}
+
 // Create pillarboxed texture data
 void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, std::vector<uint8_t>& buffer) {
     // Validate inputs
@@ -61,8 +76,8 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRES
         
         UINT padding = (pDesc->Width - contentWidth) / 2;
         
-        // Only support RGBA8 formats for now
-        UINT bytesPerPixel = 4;
+        // Support multiple formats
+        UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
         UINT rowPitch = pDesc->Width * bytesPerPixel;
         
         buffer.resize(rowPitch * pDesc->Height);
@@ -89,23 +104,53 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRES
                     // Safety check on destination
                     if (dstOffset + bytesPerPixel > buffer.size()) continue;
                     
-                    // Bilinear interpolation between two pixels
-                    for (UINT b = 0; b < bytesPerPixel; ++b) {
-                        UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
-                        UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
+                    // Handle different formats
+                    if (pDesc->Format == DXGI_FORMAT_B4G4R4A4_UNORM) {
+                        // 16-bit BGRA4 format - interpolate as 16-bit values
+                        UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel;
+                        UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel;
                         
-                        // CRITICAL: Bounds check on source buffer
-                        if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
-                            buffer[dstOffset + b] = 0; // Use black if out of bounds
+                        if (srcOffset0 + 1 >= srcBufferSize || srcOffset1 + 1 >= srcBufferSize) {
+                            buffer[dstOffset] = 0;
+                            buffer[dstOffset + 1] = 0;
                             continue;
                         }
                         
-                        float val0 = srcData[srcOffset0];
-                        float val1 = srcData[srcOffset1];
+                        uint16_t pixel0 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset0);
+                        uint16_t pixel1 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset1);
                         
-                        // Linear interpolation
-                        float result = val0 * (1.0f - fracX) + val1 * fracX;
-                        buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
+                        // Extract and interpolate each 4-bit channel
+                        uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
+                        uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
+                        uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
+                        uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
+                        
+                        uint8_t b = static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
+                        uint8_t g = static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
+                        uint8_t r = static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
+                        uint8_t a = static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
+                        
+                        uint16_t result = (b & 0xF) | ((g & 0xF) << 4) | ((r & 0xF) << 8) | ((a & 0xF) << 12);
+                        *reinterpret_cast<uint16_t*>(buffer.data() + dstOffset) = result;
+                    } else {
+                        // 32-bit RGBA/BGRA formats - interpolate byte by byte
+                        for (UINT b = 0; b < bytesPerPixel; ++b) {
+                            UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
+                            UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
+                            
+                            // CRITICAL: Bounds check on source buffer
+                            if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
+                                buffer[dstOffset + b] = 0; // Use black if out of bounds
+                                continue;
+                            }
+                            
+                            float val0 = srcData[srcOffset0];
+                            float val1 = srcData[srcOffset1];
+                            
+                            // Linear interpolation
+                            float result = val0 * (1.0f - fracX) + val1 * fracX;
+                            buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
+                        }
                     }
                 }
             }
@@ -154,7 +199,7 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D_Resize(ID3D11Device* This, cons
                         // Create new initial data structure
                         D3D11_SUBRESOURCE_DATA newInitialData;
                         newInitialData.pSysMem = buffer->data();
-                        newInitialData.SysMemPitch = pDesc->Width * 4; // 4 bytes per pixel
+                        newInitialData.SysMemPitch = pDesc->Width * GetBytesPerPixel(pDesc->Format);
                         newInitialData.SysMemSlicePitch = 0;
                         
                         // Create texture with pillarboxed data
