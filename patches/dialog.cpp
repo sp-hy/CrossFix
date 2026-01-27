@@ -7,6 +7,7 @@
 // Dynamic values for dialog scaling
 static float g_xScale = 1.0f;            // X scale for dialog text (1.0 = 4:3, 0.75 = 16:9)
 static float g_letterSpacing = 640.0f;   // Letter spacing (640 = 4:3 base)
+static float g_dialogBoxWidth = 6.0f;    // Dialog box width (6.0 = 4:3, ~-94 for 16:9, ~-194 for 21:9)
 static uint32_t g_portraitWidth = 960;   // Base 960
 static float g_lastCursorWidth = 70.0f;  // Base 70.0
 
@@ -104,13 +105,28 @@ bool ApplyDialogPatch(uintptr_t base) {
 	}
 
 	// ============================================================
-	// Patch 3: Character Portrait Width
-	// CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1, [CHRONOCROSS.exe+E2F448]
+	// Patch 3: Dialog Box Width
+	// CHRONOCROSS.exe+1B3D72 - F3 0F58 15 70BAE400 - addss xmm2,[CHRONOCROSS.exe+2CBA70]
+	// Redirect to our g_dialogBoxWidth variable
 	// ============================================================
-	uintptr_t addr3 = base + 0x415B9 + 4;
-	uint32_t newAddress3 = (uint32_t)(uintptr_t)&g_portraitWidth;
+	uintptr_t addr3 = base + 0x1B3D72 + 4;
+	uint32_t newAddress3 = (uint32_t)(uintptr_t)&g_dialogBoxWidth;
 
 	if (WriteMemory(addr3, &newAddress3, sizeof(uint32_t))) {
+		std::cout << "Dialog box width patch applied" << std::endl;
+	} else {
+		std::cout << "Failed to apply dialog box width patch" << std::endl;
+		success = false;
+	}
+
+	// ============================================================
+	// Patch 4: Character Portrait Width
+	// CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1, [CHRONOCROSS.exe+E2F448]
+	// ============================================================
+	uintptr_t addr4 = base + 0x415B9 + 4;
+	uint32_t newAddress4 = (uint32_t)(uintptr_t)&g_portraitWidth;
+
+	if (WriteMemory(addr4, &newAddress4, sizeof(uint32_t))) {
 		std::cout << "Portrait width patch applied" << std::endl;
 	} else {
 		std::cout << "Failed to apply portrait width patch" << std::endl;
@@ -125,9 +141,11 @@ void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
 
 	if (isInFmvMenu || aspectRatio < 1.4f) {
 		// Reset to 4:3 defaults
-		if (g_xScale != 1.0f || g_letterSpacing != 640.0f || g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
+		if (g_xScale != 1.0f || g_letterSpacing != 640.0f || g_dialogBoxWidth != 6.0f || 
+			g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
 			g_xScale = 1.0f;
 			g_letterSpacing = 640.0f;
+			g_dialogBoxWidth = 6.0f;
 			g_portraitWidth = 960;
 			g_lastCursorWidth = 70.0f;
 
@@ -147,6 +165,10 @@ void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
 		// Letter Spacing: expand for widescreen (640 for 4:3, ~853 for 16:9)
 		float newLetterSpacing = 640.0f * aspectRatio / BASE_ASPECT;
 
+		// Dialog Box Width: shrink for widescreen (6.0 for 4:3, ~-94 for 16:9, ~-194 for 21:9)
+		// Formula: 6.0 - 225 * (aspectRatio - 4/3)
+		float newDialogBoxWidth = 6.0f - 225.0f * (aspectRatio - BASE_ASPECT);
+
 		// Portrait Width: compress for widescreen
 		uint32_t newPortrait = (uint32_t)(960.0f * wideRatio);
 
@@ -154,10 +176,12 @@ void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
 		float newCursorWidth = 70.0f * wideRatio;
 
 		if (g_xScale != newXScale || g_letterSpacing != newLetterSpacing || 
-			g_portraitWidth != newPortrait || g_lastCursorWidth != newCursorWidth) {
+			g_dialogBoxWidth != newDialogBoxWidth || g_portraitWidth != newPortrait || 
+			g_lastCursorWidth != newCursorWidth) {
 			
 			g_xScale = newXScale;
 			g_letterSpacing = newLetterSpacing;
+			g_dialogBoxWidth = newDialogBoxWidth;
 			g_portraitWidth = newPortrait;
 			g_lastCursorWidth = newCursorWidth;
 
@@ -167,6 +191,7 @@ void UpdateDialogValues(float aspectRatio, bool isInFmvMenu, bool isInBattle) {
 #ifdef _DEBUG
 			std::cout << "Dialog updated: XScale=" << g_xScale 
 					  << ", LetterSpacing=" << g_letterSpacing 
+					  << ", BoxWidth=" << g_dialogBoxWidth
 					  << ", Portrait=" << g_portraitWidth 
 					  << ", Cursor=" << g_lastCursorWidth 
 					  << " for aspect ratio " << aspectRatio << std::endl;
