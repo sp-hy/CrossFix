@@ -5,7 +5,7 @@ static uintptr_t g_inBattleAddr = 0;
 
 bool ApplyBattlePatch(uintptr_t base) {
 	g_inBattleAddr = base + 0x6A1389;
-	std::cout << "Battle patch system initialized" << std::endl;
+	std::cout << "Battle patch applied" << std::endl;
 	return true;
 }
 

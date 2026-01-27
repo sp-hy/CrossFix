@@ -1,5 +1,5 @@
 #include "d3d11_proxy.h"
-#include <string>
+#include <Windows.h>
 #include <iostream>
 #include "../patches/upscale4k.h"
 #include "../patches/textureresize.h"
@@ -25,9 +25,12 @@ bool InitD3D11Proxy() {
     
     char systemPath[MAX_PATH];
     GetSystemDirectoryA(systemPath, MAX_PATH);
-    std::string d3d11Path = std::string(systemPath) + "\\d3d11.dll";
     
-    g_hD3D11 = LoadLibraryA(d3d11Path.c_str());
+    char d3d11Path[MAX_PATH];
+    strcpy_s(d3d11Path, systemPath);
+    strcat_s(d3d11Path, "\\d3d11.dll");
+    
+    g_hD3D11 = LoadLibraryA(d3d11Path);
     if (!g_hD3D11) {
         MessageBoxA(NULL, "Failed to load system d3d11.dll", "CrossFix D3D11 Proxy", MB_ICONERROR);
         return false;
@@ -41,6 +44,40 @@ bool InitD3D11Proxy() {
     pD3D11CoreRegisterLayers = (PFN_D3D11_CORE_REGISTER_LAYERS)GetProcAddress(g_hD3D11, "D3D11CoreRegisterLayers");
     
     return true;
+}
+
+// SEH-safe wrapper functions (no C++ objects that need unwinding)
+static DWORD SafeApplyTextureResizeHooks(ID3D11Device* pDevice) {
+    __try {
+        ApplyTextureResizeHooks(pDevice);
+        return 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+
+static DWORD SafeApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
+    __try {
+        ApplyUpscale4KPatch(pDevice, pContext);
+        return 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+
+// Apply all hooks with SEH protection
+static void ApplyHooksWithProtection(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
+    DWORD exCode;
+    
+    exCode = SafeApplyTextureResizeHooks(pDevice);
+    if (exCode != 0) {
+        std::cout << "Warning: Texture resize hooks failed (0x" << std::hex << exCode << std::dec << "), continuing without them" << std::endl;
+    }
+    
+    exCode = SafeApplyUpscale4KPatch(pDevice, pContext);
+    if (exCode != 0) {
+        std::cout << "Warning: Upscale hooks failed (0x" << std::hex << exCode << std::dec << "), continuing without them" << std::endl;
+    }
 }
 
 extern "C" {
@@ -61,12 +98,8 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDevice(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, ppDevice, pFeatureLevel, ppImmediateContext);
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
-            // Only apply patches if version check passed
             if (g_versionCheckPassed) {
-                // Apply resize hooks FIRST, then upscale hooks
-                // This ensures the hook chain is correct
-                ApplyTextureResizeHooks(*ppDevice);
-                ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+                ApplyHooksWithProtection(*ppDevice, *ppImmediateContext);
             }
         }
         return hr;
@@ -91,11 +124,8 @@ extern "C" {
         
         HRESULT hr = pD3D11CreateDeviceAndSwapChain(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
         if (SUCCEEDED(hr) && ppDevice && *ppDevice && ppImmediateContext && *ppImmediateContext) {
-            // Only apply patches if version check passed
             if (g_versionCheckPassed) {
-                // Apply resize hooks FIRST, then upscale hooks
-                ApplyTextureResizeHooks(*ppDevice);
-                ApplyUpscale4KPatch(*ppDevice, *ppImmediateContext);
+                ApplyHooksWithProtection(*ppDevice, *ppImmediateContext);
             }
         }
         return hr;

@@ -16,7 +16,7 @@ bool ApplyDisablePausePatch(uintptr_t base) {
 		return false;
 	}
 	
-	std::cout << "Disable pause on focus loss patch applied successfully!" << std::endl;
+	std::cout << "Pause fix patch applied" << std::endl;
 #ifdef _DEBUG
 	std::cout << "  Patched 0x" << std::hex << addr << std::dec << std::endl;
 #endif

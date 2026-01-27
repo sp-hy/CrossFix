@@ -8,33 +8,36 @@
 #include <iostream>
 #include "../utils/settings.h"
 
-
 namespace {
-    // Upscale configuration - now dynamic
     constexpr float BaseWidth = 4096.0f;
     constexpr float BaseHeight = 2048.0f;
     
-    // Dynamic scale values (set at runtime based on settings)
     static float g_ResMultiplier = 4.0f;
     static float g_NewWidth = BaseWidth * 4.0f;
     static float g_NewHeight = BaseHeight * 4.0f;
 
-    // Function pointer typedefs
     typedef void (STDMETHODCALLTYPE *RSSetViewports_t)(ID3D11DeviceContext*, UINT, const D3D11_VIEWPORT*);
     typedef void (STDMETHODCALLTYPE *CopySubresourceRegion_t)(ID3D11DeviceContext*, ID3D11Resource*, UINT, UINT, UINT, UINT, ID3D11Resource*, UINT, const D3D11_BOX*, BOOL);
     typedef HRESULT (STDMETHODCALLTYPE *CreateTexture2D_t)(ID3D11Device*, const D3D11_TEXTURE2D_DESC*, const D3D11_SUBRESOURCE_DATA*, ID3D11Texture2D**);
 
-    // Original function pointers
-    RSSetViewports_t Original_RSSetViewports = nullptr;
-    CopySubresourceRegion_t Original_CopySubresourceRegion = nullptr;
-    CreateTexture2D_t Original_CreateTexture2D = nullptr;
+    // Win32 primitives for thread-safe access (avoids C++ runtime initialization issues)
+    volatile RSSetViewports_t Original_RSSetViewports = nullptr;
+    volatile CopySubresourceRegion_t Original_CopySubresourceRegion = nullptr;
+    volatile CreateTexture2D_t Original_CreateTexture2D = nullptr;
     
-    // Ready flags to prevent race conditions during hook installation
-    volatile bool g_viewportsHookReady = false;
-    volatile bool g_copyHookReady = false;
-    volatile bool g_createTextureHookReady = false;
+    volatile LONG g_viewportsHookReady = 0;
+    volatile LONG g_copyHookReady = 0;
+    volatile LONG g_createTextureHookReady = 0;
+    
+    CRITICAL_SECTION g_hookInstallCS;
+    volatile LONG g_hookCSInitialized = 0;
+    
+    void InitHookCS() {
+        if (InterlockedCompareExchange(&g_hookCSInitialized, 1, 0) == 0) {
+            InitializeCriticalSection(&g_hookInstallCS);
+        }
+    }
 
-    // Helper: Check if format is a color render target format
     inline bool IsColorFormat(DXGI_FORMAT format) {
         return format == DXGI_FORMAT_R8G8B8A8_UNORM ||
                format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
@@ -46,8 +49,13 @@ namespace {
 }
 
 void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT NumViewports, const D3D11_VIEWPORT* pViewports) {
-    if (!g_viewportsHookReady || !Original_RSSetViewports) {
-        return; // Not ready yet
+    MemoryBarrier();
+    RSSetViewports_t pOriginal = Original_RSSetViewports;
+    
+    if (!pOriginal) return;
+    if (!g_viewportsHookReady) {
+        pOriginal(This, NumViewports, pViewports);
+        return;
     }
     
     if (NumViewports == 1 && pViewports) {
@@ -82,7 +90,7 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
                         vp.Width = std::min(vp.Width, 32767.0f);
                         vp.Height = std::min(vp.Height, 32767.0f);
 
-                        Original_RSSetViewports(This, 1, &vp);
+                        pOriginal(This, 1, &vp);
 
                         pTex->Release();
                         pRes->Release();
@@ -97,12 +105,17 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
         }
     }
 
-    Original_RSSetViewports(This, NumViewports, pViewports);
+    pOriginal(This, NumViewports, pViewports);
 }
 
 void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const D3D11_BOX* pSrcBox, BOOL bWrapped) {
-    if (!g_copyHookReady || !Original_CopySubresourceRegion) {
-        return; // Not ready yet
+    MemoryBarrier();
+    CopySubresourceRegion_t pOriginal = Original_CopySubresourceRegion;
+    
+    if (!pOriginal) return;
+    if (!g_copyHookReady) {
+        pOriginal(This, pDstResource, DstSubresource, DstX, DstY, DstZ, pSrcResource, SrcSubresource, pSrcBox, bWrapped);
+        return;
     }
     
     D3D11_BOX newBox = {};
@@ -158,13 +171,15 @@ void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, I
         if (pDstTex) pDstTex->Release();
     }
 
-    Original_CopySubresourceRegion(This, pDstResource, DstSubresource, ActualDstX, ActualDstY, DstZ, pSrcResource, SrcSubresource, pActualSrcBox, bWrapped);
+    pOriginal(This, pDstResource, DstSubresource, ActualDstX, ActualDstY, DstZ, pSrcResource, SrcSubresource, pActualSrcBox, bWrapped);
 }
 
 HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(ID3D11Device* This, const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Texture2D** ppTexture2D) {
-    if (!g_createTextureHookReady || !Original_CreateTexture2D) {
-        return E_FAIL; // Not ready yet
-    }
+    MemoryBarrier();
+    CreateTexture2D_t pOriginal = Original_CreateTexture2D;
+    
+    if (!pOriginal) return E_FAIL;
+    if (!g_createTextureHookReady) return pOriginal(This, pDesc, pInitialData, ppTexture2D);
     
     HRESULT hr;
     const D3D11_TEXTURE2D_DESC* actualDesc = pDesc;
@@ -178,12 +193,11 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(ID3D11Device* This, const D3D11
         newDesc.Height = (UINT)g_NewHeight;
         actualDesc = &newDesc;
         
-        hr = Original_CreateTexture2D(This, &newDesc, pInitialData, ppTexture2D);
+        hr = pOriginal(This, &newDesc, pInitialData, ppTexture2D);
     } else {
-        hr = Original_CreateTexture2D(This, pDesc, pInitialData, ppTexture2D);
+        hr = pOriginal(This, pDesc, pInitialData, ppTexture2D);
     }
     
-    // Dump texture if creation succeeded
     if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && actualDesc) {
         ID3D11DeviceContext* pContext = nullptr;
         This->GetImmediateContext(&pContext);
@@ -199,128 +213,135 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(ID3D11Device* This, const D3D11
 void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
     if (!pContext || !pDevice) return;
 
-    static bool applied = false;
-    if (applied) return;
-    applied = true;
+    static volatile LONG applied = 0;
+    if (InterlockedCompareExchange(&applied, 1, 0) != 0) return;
 
-    char exePath[MAX_PATH];
-    std::string settingsPath = "settings.ini";
-    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
-        std::string exePathStr(exePath);
-        size_t lastBackslash = exePathStr.find_last_of("\\/");
-        if (lastBackslash != std::string::npos) {
-            settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-        }
-    }
-
-    Settings settings;
-    settings.Load(settingsPath);
-    
-    // Handle first-run prompt for upscaling
-    bool upscaleEnabled = settings.GetBool("upscale_enabled", false);
-    int scale = settings.GetInt("upscale_scale", 4);
-    bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
-    
-    if (!setupCompleted) {
-        std::cout << std::endl;
-        std::cout << "========================================" << std::endl;
-        std::cout << "       CrossFix - First Run Setup       " << std::endl;
-        std::cout << "========================================" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Would you like to enable texture upscaling?" << std::endl;
-        std::cout << std::endl;
-        std::cout << "WARNING: This feature is EXPERIMENTAL and may cause:" << std::endl;
-        std::cout << "  - Game crashes" << std::endl;
-        std::cout << "  - Visual glitches" << std::endl;
-        std::cout << "  - Performance issues" << std::endl;
-        std::cout << std::endl;
-        std::cout << "You can change this later in settings.ini" << std::endl;
-        std::cout << std::endl;
-        std::cout << "Enable upscaling? (Y/N): ";
-        
-        char choice;
-        std::cin >> choice;
-        upscaleEnabled = (choice == 'Y' || choice == 'y');
-        
-        if (upscaleEnabled) {
-            std::cout << std::endl;
-            std::cout << "Select upscale multiplier:" << std::endl;
-            std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
-            std::cout << "  3 - 3x - Balanced" << std::endl;
-            std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
-            std::cout << std::endl;
-            std::cout << "Enter scale (2/3/4): ";
-            
-            int scaleChoice;
-            std::cin >> scaleChoice;
-            
-            if (scaleChoice >= 2 && scaleChoice <= 4) {
-                scale = scaleChoice;
-            } else {
-                std::cout << "Invalid choice, using default (4x)" << std::endl;
-                scale = 4;
+    try {
+        char exePath[MAX_PATH];
+        std::string settingsPath = "settings.ini";
+        if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
+            std::string exePathStr(exePath);
+            size_t lastBackslash = exePathStr.find_last_of("\\/");
+            if (lastBackslash != std::string::npos) {
+                settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
             }
         }
+
+        Settings settings;
+        settings.Load(settingsPath);
         
-        // Save choices to settings file
-        settings.UpdateFile(settingsPath, "upscale_enabled", upscaleEnabled ? "1" : "0");
-        settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
-        settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
+        bool upscaleEnabled = settings.GetBool("upscale_enabled", false);
+        int scale = settings.GetInt("upscale_scale", 4);
+        bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
         
-        std::cout << std::endl;
-        std::cout << "Settings saved to settings.ini" << std::endl;
-        std::cout << "========================================" << std::endl;
-        std::cout << std::endl;
-    }
-    
-    if (!upscaleEnabled) {
-        return;
-    }
-    
-    // Validate scale setting (valid: 2, 3, 4)
-    if (scale < 2) scale = 2;
-    if (scale > 4) scale = 4;
-    
-    // Set the dynamic global values
-    g_ResMultiplier = static_cast<float>(scale);
-    g_NewWidth = BaseWidth * g_ResMultiplier;
-    g_NewHeight = BaseHeight * g_ResMultiplier;
+        if (!setupCompleted) {
+            std::cout << std::endl;
+            std::cout << "========================================" << std::endl;
+            std::cout << "       CrossFix - First Run Setup       " << std::endl;
+            std::cout << "========================================" << std::endl;
+            std::cout << std::endl;
+            std::cout << "Would you like to enable texture upscaling?" << std::endl;
+            std::cout << std::endl;
+            std::cout << "WARNING: This feature is EXPERIMENTAL and may cause:" << std::endl;
+            std::cout << "  - Game crashes" << std::endl;
+            std::cout << "  - Visual glitches" << std::endl;
+            std::cout << "  - Performance issues" << std::endl;
+            std::cout << std::endl;
+            std::cout << "You can change this later in settings.ini" << std::endl;
+            std::cout << std::endl;
+            std::cout << "Enable upscaling? (Y/N): ";
+            
+            char choice;
+            std::cin >> choice;
+            upscaleEnabled = (choice == 'Y' || choice == 'y');
+            
+            if (upscaleEnabled) {
+                std::cout << std::endl;
+                std::cout << "Select upscale multiplier:" << std::endl;
+                std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
+                std::cout << "  3 - 3x - Balanced" << std::endl;
+                std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
+                std::cout << std::endl;
+                std::cout << "Enter scale (2/3/4): ";
+                
+                int scaleChoice;
+                std::cin >> scaleChoice;
+                
+                if (scaleChoice >= 2 && scaleChoice <= 4) {
+                    scale = scaleChoice;
+                } else {
+                    std::cout << "Invalid choice, using default (4x)" << std::endl;
+                    scale = 4;
+                }
+            }
+            
+            settings.UpdateFile(settingsPath, "upscale_enabled", upscaleEnabled ? "1" : "0");
+            settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
+            settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
+            
+            std::cout << std::endl;
+            std::cout << "Settings saved to settings.ini" << std::endl;
+            std::cout << "========================================" << std::endl;
+            std::cout << std::endl;
+        }
+        
+        if (!upscaleEnabled) return;
+        
+        if (scale < 2) scale = 2;
+        if (scale > 4) scale = 4;
+        
+        g_ResMultiplier = static_cast<float>(scale);
+        g_NewWidth = BaseWidth * g_ResMultiplier;
+        g_NewHeight = BaseHeight * g_ResMultiplier;
 
+        void** contextVtable = *(void***)pContext;
+        void** deviceVtable = *(void***)pDevice;
+        
+        if (!contextVtable || !deviceVtable) return;
+        if (!contextVtable[44] || !contextVtable[46] || !deviceVtable[5]) return;
 
-    void** contextVtable = *(void***)pContext;
-    void** deviceVtable = *(void***)pDevice;
-    DWORD oldProtect;
+        InitHookCS();
+        EnterCriticalSection(&g_hookInstallCS);
+        
+        DWORD oldProtect;
 
-    // Hook ID3D11DeviceContext methods
-    if (VirtualProtect(contextVtable, sizeof(void*) * 50, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        if (contextVtable[44] != (void*)Hooked_RSSetViewports) {
-            Original_RSSetViewports = (RSSetViewports_t)contextVtable[44];
-            contextVtable[44] = (void*)Hooked_RSSetViewports;
-            FlushInstructionCache(GetCurrentProcess(), &contextVtable[44], sizeof(void*));
-            g_viewportsHookReady = true;
+        if (VirtualProtect(contextVtable, sizeof(void*) * 50, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            if (contextVtable[44] != (void*)Hooked_RSSetViewports) {
+                Original_RSSetViewports = (RSSetViewports_t)contextVtable[44];
+                MemoryBarrier();
+                contextVtable[44] = (void*)Hooked_RSSetViewports;
+                FlushInstructionCache(GetCurrentProcess(), contextVtable, sizeof(void*) * 50);
+                MemoryBarrier();
+                InterlockedExchange(&g_viewportsHookReady, 1);
+            }
+
+            if (contextVtable[46] != (void*)Hooked_CopySubresourceRegion) {
+                Original_CopySubresourceRegion = (CopySubresourceRegion_t)contextVtable[46];
+                MemoryBarrier();
+                contextVtable[46] = (void*)Hooked_CopySubresourceRegion;
+                FlushInstructionCache(GetCurrentProcess(), contextVtable, sizeof(void*) * 50);
+                MemoryBarrier();
+                InterlockedExchange(&g_copyHookReady, 1);
+            }
+
+            VirtualProtect(contextVtable, sizeof(void*) * 50, oldProtect, &oldProtect);
         }
 
-        if (contextVtable[46] != (void*)Hooked_CopySubresourceRegion) {
-            Original_CopySubresourceRegion = (CopySubresourceRegion_t)contextVtable[46];
-            contextVtable[46] = (void*)Hooked_CopySubresourceRegion;
-            FlushInstructionCache(GetCurrentProcess(), &contextVtable[46], sizeof(void*));
-            g_copyHookReady = true;
-        }
-
-        VirtualProtect(contextVtable, sizeof(void*) * 50, oldProtect, &oldProtect);
-    }
-
-    // Hook ID3D11Device methods
-    if (VirtualProtect(deviceVtable, sizeof(void*) * 10, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        if (deviceVtable[5] != (void*)Hooked_CreateTexture2D) {
-            Original_CreateTexture2D = (CreateTexture2D_t)deviceVtable[5];
-            deviceVtable[5] = (void*)Hooked_CreateTexture2D;
-            FlushInstructionCache(GetCurrentProcess(), &deviceVtable[5], sizeof(void*));
-            g_createTextureHookReady = true;
+        if (VirtualProtect(deviceVtable, sizeof(void*) * 10, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            if (deviceVtable[5] != (void*)Hooked_CreateTexture2D) {
+                Original_CreateTexture2D = (CreateTexture2D_t)deviceVtable[5];
+                MemoryBarrier();
+                deviceVtable[5] = (void*)Hooked_CreateTexture2D;
+                FlushInstructionCache(GetCurrentProcess(), deviceVtable, sizeof(void*) * 10);
+                MemoryBarrier();
+                InterlockedExchange(&g_createTextureHookReady, 1);
+            }
+            VirtualProtect(deviceVtable, sizeof(void*) * 10, oldProtect, &oldProtect);
         }
         
-        VirtualProtect(deviceVtable, sizeof(void*) * 10, oldProtect, &oldProtect);
+        LeaveCriticalSection(&g_hookInstallCS);
+        Sleep(1);
+    } catch (...) {
+        LeaveCriticalSection(&g_hookInstallCS);
     }
-    
-    std::cout << "Upscale Patch Applied (Multiplier: " << (int)g_ResMultiplier << "x)" << std::endl;
 }

@@ -28,7 +28,7 @@ bool ApplyDoubleFpsPatch(uintptr_t base) {
 		return false;
 	}
 	
-	std::cout << "Double FPS patch applied successfully!" << std::endl;
+	std::cout << "Double FPS patch applied" << std::endl;
 #ifdef _DEBUG
 	std::cout << "  Patched 0x" << std::hex << addr1 << std::dec << std::endl;
 	std::cout << "  Patched 0x" << std::hex << addr2 << std::dec << std::endl;

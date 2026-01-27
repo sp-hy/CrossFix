@@ -84,9 +84,7 @@ bool ApplyDialogPatch(uintptr_t base) {
 	memcpy(&jmpPatch[1], &hookRel, 4);
 	jmpPatch[5] = 0x90; // NOP
 
-	if (WriteMemory(hookAddr, jmpPatch, 6)) {
-		std::cout << "Dialog X scale hook applied at " << std::hex << hookAddr << std::dec << std::endl;
-	} else {
+	if (!WriteMemory(hookAddr, jmpPatch, 6)) {
 		std::cout << "Failed to apply dialog X scale hook" << std::endl;
 		success = false;
 	}
@@ -97,9 +95,7 @@ bool ApplyDialogPatch(uintptr_t base) {
 	// ============================================================
 	// This is a direct memory value we'll update dynamically
 	// Initial write to set up
-	if (WriteMemory(g_letterSpacingAddr, &g_letterSpacing, sizeof(float))) {
-		std::cout << "Letter spacing patch applied" << std::endl;
-	} else {
+	if (!WriteMemory(g_letterSpacingAddr, &g_letterSpacing, sizeof(float))) {
 		std::cout << "Failed to apply letter spacing patch" << std::endl;
 		success = false;
 	}
@@ -112,9 +108,7 @@ bool ApplyDialogPatch(uintptr_t base) {
 	uintptr_t addr3 = base + 0x1B3D72 + 4;
 	uint32_t newAddress3 = (uint32_t)(uintptr_t)&g_dialogBoxWidth;
 
-	if (WriteMemory(addr3, &newAddress3, sizeof(uint32_t))) {
-		std::cout << "Dialog box width patch applied" << std::endl;
-	} else {
+	if (!WriteMemory(addr3, &newAddress3, sizeof(uint32_t))) {
 		std::cout << "Failed to apply dialog box width patch" << std::endl;
 		success = false;
 	}
@@ -126,11 +120,13 @@ bool ApplyDialogPatch(uintptr_t base) {
 	uintptr_t addr4 = base + 0x415B9 + 4;
 	uint32_t newAddress4 = (uint32_t)(uintptr_t)&g_portraitWidth;
 
-	if (WriteMemory(addr4, &newAddress4, sizeof(uint32_t))) {
-		std::cout << "Portrait width patch applied" << std::endl;
-	} else {
+	if (!WriteMemory(addr4, &newAddress4, sizeof(uint32_t))) {
 		std::cout << "Failed to apply portrait width patch" << std::endl;
 		success = false;
+	}
+
+	if (success) {
+		std::cout << "Dialog patch applied" << std::endl;
 	}
 
 	return success;
