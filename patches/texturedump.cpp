@@ -553,6 +553,8 @@ namespace {
     std::unordered_set<uint64_t> g_resizeHashes;
     // List of texture sizes (Width, Height) that should be resized
     std::set<std::pair<UINT, UINT>> g_resizeSizes;
+    // List of texture sizes that should use center padding (for split textures)
+    std::set<std::pair<UINT, UINT>> g_centerPaddedSizes;
     bool g_resizeHashesInitialized = false;
     
     // Initialize the resize hash list with known textures
@@ -564,11 +566,8 @@ namespace {
         // This hash is from the filename - you can add more hashes here
 
         g_resizeHashes.insert(0x30c9ba509d8378f8ULL); // Main Logo (1280x960)
-
-
         g_resizeSizes.insert({ 1024, 1024 });        // Key Items
         g_resizeSizes.insert({ 512, 512 });        // Key Items
-        g_resizeSizes.insert({ 512, 896 });        // Menu portraits (menu)
         g_resizeSizes.insert({ 256, 1792 });        // Menu portraits (post battle)
         g_resizeSizes.insert({ 1164, 1166 });        // Menu compass
         g_resizeSizes.insert({ 405, 58 });        // Menu compass arrow
@@ -579,10 +578,13 @@ namespace {
         // g_resizeSizes.insert({ 736, 96 }); // Battle element name menu?
         // g_resizeSizes.insert({ 64, 32 }); // Battle element mini
 
+        // Textures that need center padding (split left/right)
+        g_centerPaddedSizes.insert({ 512, 896 });        // Menu portraits (menu)
+
 
 
         
-        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes and " << g_resizeSizes.size() << " sizes" << std::endl;
+        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes, " << g_resizeSizes.size() << " sizes, and " << g_centerPaddedSizes.size() << " center-padded sizes" << std::endl;
     }
 }
 
@@ -617,8 +619,11 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
     try {
         InitializeResizeHashes();
         
-        // 1. Check if this size is explicitly whitelisted
+        // 1. Check if this size is explicitly whitelisted (normal or center-padded)
         if (g_resizeSizes.find({pDesc->Width, pDesc->Height}) != g_resizeSizes.end()) {
+            return true;
+        }
+        if (g_centerPaddedSizes.find({pDesc->Width, pDesc->Height}) != g_centerPaddedSizes.end()) {
             return true;
         }
         
@@ -633,6 +638,18 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
         return false;
     } catch (...) {
         // If anything fails, don't resize
+        return false;
+    }
+}
+
+// Check if a texture should use center padding (for split textures)
+bool ShouldCenterPadTexture(const D3D11_TEXTURE2D_DESC* pDesc) {
+    if (!pDesc) return false;
+    
+    try {
+        InitializeResizeHashes();
+        return g_centerPaddedSizes.find({pDesc->Width, pDesc->Height}) != g_centerPaddedSizes.end();
+    } catch (...) {
         return false;
     }
 }

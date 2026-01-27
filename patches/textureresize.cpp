@@ -68,9 +68,163 @@ UINT GetBytesPerPixel(DXGI_FORMAT format) {
     }
 }
 
+void CreateCenterPaddedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, std::vector<uint8_t>& buffer) {
+    if (!pDesc || !pInitialData || !pInitialData->pSysMem || pInitialData->SysMemPitch == 0) return;
+    if (pDesc->Width == 0 || pDesc->Height == 0) return;
+    
+    try {
+        float widescreenRatio = GetCurrentWidescreenRatio();
+        
+        // Each half (256 pixels) needs to be scaled independently
+        UINT halfWidth = pDesc->Width / 2;  // 256 pixels
+        
+        // Calculate the scaled content width for each half
+        UINT halfContentWidth = static_cast<UINT>(halfWidth * widescreenRatio);
+        if (halfContentWidth < 1) halfContentWidth = 1;
+        if (halfContentWidth > halfWidth) halfContentWidth = halfWidth;
+        
+        // Padding for each half (distributed evenly on both sides)
+        UINT halfPadding = (halfWidth - halfContentWidth) / 2;
+        
+        UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
+        UINT rowPitch = pDesc->Width * bytesPerPixel;
+        
+        buffer.resize(rowPitch * pDesc->Height);
+        std::fill(buffer.begin(), buffer.end(), 0);
+        
+        if (pInitialData && pInitialData->pSysMem && pInitialData->SysMemPitch > 0) {
+            const uint8_t* srcData = static_cast<const uint8_t*>(pInitialData->pSysMem);
+            size_t srcBufferSize = pInitialData->SysMemPitch * pDesc->Height;
+            
+            // Process left half (0-255) with padding
+            for (UINT y = 0; y < pDesc->Height; ++y) {
+                for (UINT x = 0; x < halfContentWidth; ++x) {
+                    float srcXf = (float)x / widescreenRatio;
+                    UINT srcX0 = static_cast<UINT>(srcXf);
+                    if (srcX0 >= halfWidth) srcX0 = halfWidth - 1;
+                    UINT srcX1 = (srcX0 + 1 < halfWidth) ? srcX0 + 1 : halfWidth - 1;
+                    float fracX = srcXf - srcX0;
+                    
+                    // Position in left half: add halfPadding offset
+                    UINT dstOffset = y * rowPitch + (halfPadding + x) * bytesPerPixel;
+                    if (dstOffset + bytesPerPixel > buffer.size()) continue;
+                    
+                    if (pDesc->Format == DXGI_FORMAT_B4G4R4A4_UNORM) {
+                        UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel;
+                        UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel;
+                        
+                        if (srcOffset0 + 1 >= srcBufferSize || srcOffset1 + 1 >= srcBufferSize) {
+                            buffer[dstOffset] = 0;
+                            buffer[dstOffset + 1] = 0;
+                            continue;
+                        }
+                        
+                        uint16_t pixel0 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset0);
+                        uint16_t pixel1 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset1);
+                        
+                        uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
+                        uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
+                        uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
+                        uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
+                        
+                        uint8_t b = static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
+                        uint8_t g = static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
+                        uint8_t r = static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
+                        uint8_t a = static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
+                        
+                        uint16_t result = (b & 0xF) | ((g & 0xF) << 4) | ((r & 0xF) << 8) | ((a & 0xF) << 12);
+                        *reinterpret_cast<uint16_t*>(buffer.data() + dstOffset) = result;
+                    } else {
+                        for (UINT b = 0; b < bytesPerPixel; ++b) {
+                            UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
+                            UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
+                            
+                            if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
+                                buffer[dstOffset + b] = 0;
+                                continue;
+                            }
+                            
+                            float val0 = srcData[srcOffset0];
+                            float val1 = srcData[srcOffset1];
+                            float result = val0 * (1.0f - fracX) + val1 * fracX;
+                            buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
+                        }
+                    }
+                }
+            }
+            
+            // Process right half (256-511) with the same padding pattern
+            for (UINT y = 0; y < pDesc->Height; ++y) {
+                for (UINT x = 0; x < halfContentWidth; ++x) {
+                    // Use identical sampling calculation as left half
+                    float srcXf = (float)x / widescreenRatio;
+                    UINT srcX0 = halfWidth + static_cast<UINT>(srcXf);
+                    if (srcX0 >= pDesc->Width) srcX0 = pDesc->Width - 1;
+                    UINT srcX1 = (srcX0 + 1 < pDesc->Width) ? srcX0 + 1 : pDesc->Width - 1;
+                    float fracX = srcXf - static_cast<UINT>(srcXf);
+                    
+                    // Position in right half: halfWidth + halfPadding + x
+                    UINT dstOffset = y * rowPitch + (halfWidth + halfPadding + x) * bytesPerPixel;
+                    if (dstOffset + bytesPerPixel > buffer.size()) continue;
+                    
+                    if (pDesc->Format == DXGI_FORMAT_B4G4R4A4_UNORM) {
+                        UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel;
+                        UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel;
+                        
+                        if (srcOffset0 + 1 >= srcBufferSize || srcOffset1 + 1 >= srcBufferSize) {
+                            buffer[dstOffset] = 0;
+                            buffer[dstOffset + 1] = 0;
+                            continue;
+                        }
+                        
+                        uint16_t pixel0 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset0);
+                        uint16_t pixel1 = *reinterpret_cast<const uint16_t*>(srcData + srcOffset1);
+                        
+                        uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
+                        uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
+                        uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
+                        uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
+                        
+                        uint8_t b = static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
+                        uint8_t g = static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
+                        uint8_t r = static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
+                        uint8_t a = static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
+                        
+                        uint16_t result = (b & 0xF) | ((g & 0xF) << 4) | ((r & 0xF) << 8) | ((a & 0xF) << 12);
+                        *reinterpret_cast<uint16_t*>(buffer.data() + dstOffset) = result;
+                    } else {
+                        for (UINT b = 0; b < bytesPerPixel; ++b) {
+                            UINT srcOffset0 = y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
+                            UINT srcOffset1 = y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
+                            
+                            if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
+                                buffer[dstOffset + b] = 0;
+                                continue;
+                            }
+                            
+                            float val0 = srcData[srcOffset0];
+                            float val1 = srcData[srcOffset1];
+                            float result = val0 * (1.0f - fracX) + val1 * fracX;
+                            buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        buffer.clear();
+    }
+}
+
 void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, std::vector<uint8_t>& buffer) {
     if (!pDesc || !pInitialData || !pInitialData->pSysMem || pInitialData->SysMemPitch == 0) return;
     if (pDesc->Width == 0 || pDesc->Height == 0) return;
+    
+    // Check if this texture needs center padding (for split left/right textures)
+    if (ShouldCenterPadTexture(pDesc)) {
+        CreateCenterPaddedData(pDesc, pInitialData, buffer);
+        return;
+    }
     
     try {
         float widescreenRatio = GetCurrentWidescreenRatio();
