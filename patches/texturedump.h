@@ -10,5 +10,6 @@ bool IsTextureDumpEnabled();
 void ResizeTexture2D(const D3D11_TEXTURE2D_DESC* pDesc, D3D11_TEXTURE2D_DESC* pNewDesc);
 bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData);
 bool ShouldCenterPadTexture(const D3D11_TEXTURE2D_DESC* pDesc);
+UINT GetTextureSplitPieces(const D3D11_TEXTURE2D_DESC* pDesc);
 void AddResizeHash(uint64_t hash);
 void ClearResizeHashes();

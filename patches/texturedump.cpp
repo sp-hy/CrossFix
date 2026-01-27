@@ -10,6 +10,7 @@
 #include <functional>
 #include <algorithm>
 #include <set>
+#include <map>
 #include <unordered_set>
 
 using Microsoft::WRL::ComPtr;
@@ -553,8 +554,9 @@ namespace {
     std::unordered_set<uint64_t> g_resizeHashes;
     // List of texture sizes (Width, Height) that should be resized
     std::set<std::pair<UINT, UINT>> g_resizeSizes;
-    // List of texture sizes that should use center padding (for split textures)
-    std::set<std::pair<UINT, UINT>> g_centerPaddedSizes;
+    // Map of texture sizes to number of horizontal pieces (for split textures)
+    // Key: {Width, Height}, Value: number of pieces (2, 3, 5, etc.)
+    std::map<std::pair<UINT, UINT>, UINT> g_splitTexturePieces;
     bool g_resizeHashesInitialized = false;
     
     // Initialize the resize hash list with known textures
@@ -578,13 +580,15 @@ namespace {
         // g_resizeSizes.insert({ 736, 96 }); // Battle element name menu?
         // g_resizeSizes.insert({ 64, 32 }); // Battle element mini
 
-        // Textures that need center padding (split left/right)
-        g_centerPaddedSizes.insert({ 512, 896 });        // Menu portraits (menu)
+        // Textures that are split into multiple horizontal pieces
+        // Format: { {Width, Height}, NumPieces }
+        g_splitTexturePieces[{ 512, 896 }] = 2;   // Menu portraits (menu)
+        g_splitTexturePieces[{ 528, 144 }] = 5;  // Menu Icons
 
 
 
         
-        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes, " << g_resizeSizes.size() << " sizes, and " << g_centerPaddedSizes.size() << " center-padded sizes" << std::endl;
+        std::cout << "Initialized texture resize list with " << g_resizeHashes.size() << " hashes, " << g_resizeSizes.size() << " sizes, and " << g_splitTexturePieces.size() << " split textures" << std::endl;
     }
 }
 
@@ -619,11 +623,11 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
     try {
         InitializeResizeHashes();
         
-        // 1. Check if this size is explicitly whitelisted (normal or center-padded)
+        // 1. Check if this size is explicitly whitelisted (normal or split)
         if (g_resizeSizes.find({pDesc->Width, pDesc->Height}) != g_resizeSizes.end()) {
             return true;
         }
-        if (g_centerPaddedSizes.find({pDesc->Width, pDesc->Height}) != g_centerPaddedSizes.end()) {
+        if (g_splitTexturePieces.find({pDesc->Width, pDesc->Height}) != g_splitTexturePieces.end()) {
             return true;
         }
         
@@ -642,16 +646,25 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOU
     }
 }
 
-// Check if a texture should use center padding (for split textures)
-bool ShouldCenterPadTexture(const D3D11_TEXTURE2D_DESC* pDesc) {
-    if (!pDesc) return false;
+// Get the number of pieces a texture is split into (0 if not split)
+UINT GetTextureSplitPieces(const D3D11_TEXTURE2D_DESC* pDesc) {
+    if (!pDesc) return 0;
     
     try {
         InitializeResizeHashes();
-        return g_centerPaddedSizes.find({pDesc->Width, pDesc->Height}) != g_centerPaddedSizes.end();
+        auto it = g_splitTexturePieces.find({pDesc->Width, pDesc->Height});
+        if (it != g_splitTexturePieces.end()) {
+            return it->second;
+        }
+        return 0;
     } catch (...) {
-        return false;
+        return 0;
     }
+}
+
+// Check if a texture should use split padding (for split textures)
+bool ShouldCenterPadTexture(const D3D11_TEXTURE2D_DESC* pDesc) {
+    return GetTextureSplitPieces(pDesc) > 0;
 }
 
 // Resize texture content by adding pillarboxing (empty space on sides)
