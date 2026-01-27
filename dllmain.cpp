@@ -41,8 +41,10 @@ DWORD WINAPI MainThread(LPVOID param) {
 	}
 
 	AllocConsole();
-	FILE* f;
-	freopen_s(&f, "CONOUT$", "w", stdout);
+	FILE* fout;
+	FILE* fin;
+	freopen_s(&fout, "CONOUT$", "w", stdout);
+	freopen_s(&fin, "CONIN$", "r", stdin);
 
 	std::cout << "CrossFix - v0.5" << std::endl;
 	std::cout << std::endl;

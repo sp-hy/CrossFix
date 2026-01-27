@@ -8,7 +8,7 @@ Supports the latest Steam release v1.0.1.0
 
 - **Dynamic Widescreen** - Automatically scales to any aspect ratio (16:9, 21:9, 32:9, etc.)
 - **60 FPS Mode** - Unlock the frame rate to 60 FPS everywhere
-- **4K Upscaling** - High resolution rendering for 3D elements
+- **Upscaling (2x/3x/4x)** - High resolution rendering for 3D elements (experimental)
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 
 ## Todo:
@@ -46,8 +46,11 @@ double_fps_mode=1
 # 1 = game & music continue running when window is inactive
 disable_pause_on_focus_loss=1
 
-# Enable or disable 4K Upscaling
-upscale_4k=1
+# Enable or disable Upscaling (experimental, may cause crashes)
+upscale_enabled=0
+
+# Upscale multiplier (valid values: 2, 3, or 4)
+upscale_scale=4
 ```
 
 ## Notes

@@ -1,4 +1,4 @@
-// 4K Upscale Patch - Based on SpecialK's implementation
+// Upscale Patch - Based on SpecialK's implementation
 
 #define NOMINMAX
 #include "upscale4k.h"
@@ -10,12 +10,14 @@
 
 
 namespace {
-    // Upscale configuration
-    constexpr float ResMultiplier = 4.0f;
+    // Upscale configuration - now dynamic
     constexpr float BaseWidth = 4096.0f;
     constexpr float BaseHeight = 2048.0f;
-    constexpr float NewWidth = BaseWidth * ResMultiplier;
-    constexpr float NewHeight = BaseHeight * ResMultiplier;
+    
+    // Dynamic scale values (set at runtime based on settings)
+    static float g_ResMultiplier = 4.0f;
+    static float g_NewWidth = BaseWidth * 4.0f;
+    static float g_NewHeight = BaseHeight * 4.0f;
 
     // Function pointer typedefs
     typedef void (STDMETHODCALLTYPE *RSSetViewports_t)(ID3D11DeviceContext*, UINT, const D3D11_VIEWPORT*);
@@ -64,16 +66,16 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
                     D3D11_TEXTURE2D_DESC texDesc;
                     pTex->GetDesc(&texDesc);
 
-                    if (texDesc.Width == (UINT)NewWidth && texDesc.Height == (UINT)NewHeight) {
+                    if (texDesc.Width == (UINT)g_NewWidth && texDesc.Height == (UINT)g_NewHeight) {
                         D3D11_VIEWPORT vp = *pViewports;
 
                         float left_ndc = 2.0f * (vp.TopLeftX / BaseWidth) - 1.0f;
                         float top_ndc = 2.0f * (vp.TopLeftY / BaseHeight) - 1.0f;
 
-                        vp.TopLeftX = (left_ndc * NewWidth + NewWidth) / 2.0f;
-                        vp.TopLeftY = (top_ndc * NewHeight + NewHeight) / 2.0f;
-                        vp.Width = ResMultiplier * vp.Width;
-                        vp.Height = ResMultiplier * vp.Height;
+                        vp.TopLeftX = (left_ndc * g_NewWidth + g_NewWidth) / 2.0f;
+                        vp.TopLeftY = (top_ndc * g_NewHeight + g_NewHeight) / 2.0f;
+                        vp.Width = g_ResMultiplier * vp.Width;
+                        vp.Height = g_ResMultiplier * vp.Height;
 
                         vp.TopLeftX = std::min(vp.TopLeftX, 32767.0f);
                         vp.TopLeftY = std::min(vp.TopLeftY, 32767.0f);
@@ -121,13 +123,13 @@ void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, I
             pSrcTex->GetDesc(&srcDesc);
             pDstTex->GetDesc(&dstDesc);
 
-            if (srcDesc.Width == (UINT)NewWidth && srcDesc.Height == (UINT)NewHeight && pSrcBox &&
-                dstDesc.Width == (UINT)NewWidth && dstDesc.Height == (UINT)NewHeight) {
+            if (srcDesc.Width == (UINT)g_NewWidth && srcDesc.Height == (UINT)g_NewHeight && pSrcBox &&
+                dstDesc.Width == (UINT)g_NewWidth && dstDesc.Height == (UINT)g_NewHeight) {
                 
                 newBox = *pSrcBox;
 
-                constexpr float HalfWidth = NewWidth / 2.0f;
-                constexpr float HalfHeight = NewHeight / 2.0f;
+                float HalfWidth = g_NewWidth / 2.0f;
+                float HalfHeight = g_NewHeight / 2.0f;
 
                 float left_ndc = 2.0f * (static_cast<float>(std::clamp((UINT)newBox.left, 0U, 4096U)) / 4096.0f) - 1.0f;
                 float top_ndc = 2.0f * (static_cast<float>(std::clamp((UINT)newBox.top, 0U, 2048U)) / 2048.0f) - 1.0f;
@@ -139,8 +141,8 @@ void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, I
                 newBox.right = static_cast<UINT>(std::max(0.0f, right_ndc * HalfWidth + HalfWidth));
                 newBox.bottom = static_cast<UINT>(std::max(0.0f, bottom_ndc * HalfHeight + HalfHeight));
 
-                ActualDstX = DstX * (UINT)ResMultiplier;
-                ActualDstY = DstY * (UINT)ResMultiplier;
+                ActualDstX = DstX * (UINT)g_ResMultiplier;
+                ActualDstY = DstY * (UINT)g_ResMultiplier;
                 
                 pActualSrcBox = &newBox;
             } 
@@ -172,8 +174,8 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(ID3D11Device* This, const D3D11
         (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) && IsColorFormat(pDesc->Format) && !pInitialData) {
         
         newDesc = *pDesc;
-        newDesc.Width = (UINT)NewWidth;
-        newDesc.Height = (UINT)NewHeight;
+        newDesc.Width = (UINT)g_NewWidth;
+        newDesc.Height = (UINT)g_NewHeight;
         actualDesc = &newDesc;
         
         hr = Original_CreateTexture2D(This, &newDesc, pInitialData, ppTexture2D);
@@ -213,9 +215,76 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
 
     Settings settings;
     settings.Load(settingsPath);
-    if (!settings.GetBool("upscale_4k", true)) {
+    
+    // Handle first-run prompt for upscaling
+    bool upscaleEnabled = settings.GetBool("upscale_enabled", false);
+    int scale = settings.GetInt("upscale_scale", 4);
+    bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
+    
+    if (!setupCompleted) {
+        std::cout << std::endl;
+        std::cout << "========================================" << std::endl;
+        std::cout << "       CrossFix - First Run Setup       " << std::endl;
+        std::cout << "========================================" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Would you like to enable texture upscaling?" << std::endl;
+        std::cout << std::endl;
+        std::cout << "WARNING: This feature is EXPERIMENTAL and may cause:" << std::endl;
+        std::cout << "  - Game crashes" << std::endl;
+        std::cout << "  - Visual glitches" << std::endl;
+        std::cout << "  - Performance issues" << std::endl;
+        std::cout << std::endl;
+        std::cout << "You can change this later in settings.ini" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Enable upscaling? (Y/N): ";
+        
+        char choice;
+        std::cin >> choice;
+        upscaleEnabled = (choice == 'Y' || choice == 'y');
+        
+        if (upscaleEnabled) {
+            std::cout << std::endl;
+            std::cout << "Select upscale multiplier:" << std::endl;
+            std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
+            std::cout << "  3 - 3x - Balanced" << std::endl;
+            std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
+            std::cout << std::endl;
+            std::cout << "Enter scale (2/3/4): ";
+            
+            int scaleChoice;
+            std::cin >> scaleChoice;
+            
+            if (scaleChoice >= 2 && scaleChoice <= 4) {
+                scale = scaleChoice;
+            } else {
+                std::cout << "Invalid choice, using default (4x)" << std::endl;
+                scale = 4;
+            }
+        }
+        
+        // Save choices to settings file
+        settings.UpdateFile(settingsPath, "upscale_enabled", upscaleEnabled ? "1" : "0");
+        settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
+        settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
+        
+        std::cout << std::endl;
+        std::cout << "Settings saved to settings.ini" << std::endl;
+        std::cout << "========================================" << std::endl;
+        std::cout << std::endl;
+    }
+    
+    if (!upscaleEnabled) {
         return;
     }
+    
+    // Validate scale setting (valid: 2, 3, 4)
+    if (scale < 2) scale = 2;
+    if (scale > 4) scale = 4;
+    
+    // Set the dynamic global values
+    g_ResMultiplier = static_cast<float>(scale);
+    g_NewWidth = BaseWidth * g_ResMultiplier;
+    g_NewHeight = BaseHeight * g_ResMultiplier;
 
 
     void** contextVtable = *(void***)pContext;
@@ -253,9 +322,5 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
         VirtualProtect(deviceVtable, sizeof(void*) * 10, oldProtect, &oldProtect);
     }
     
-#ifdef _DEBUG
-    std::cout << "Upscale 4K Patch Applied (Multiplier: " << ResMultiplier << ")" << std::endl;
-#else
-    std::cout << "Upscale 4K Patch Applied" << std::endl;
-#endif
+    std::cout << "Upscale Patch Applied (Multiplier: " << (int)g_ResMultiplier << "x)" << std::endl;
 }

@@ -1,9 +1,9 @@
 #include "textureresize.h"
 #include "texturedump.h"
 #include "widescreen.h"
+#include "../utils/settings.h"
 #include <Windows.h>
 #include <iostream>
-#include <fstream>
 #include <vector>
 #include <algorithm>
 #include <memory>
@@ -252,7 +252,7 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D_Resize(ID3D11Device* This, cons
 void ApplyTextureResizeHooks(ID3D11Device* pDevice) {
     if (!pDevice || g_resizeHooksApplied) return;
     
-    // Check if texture resizing is enabled in settings
+    // Texture resize is enabled when widescreen is on, but NOT when texture dumping is active
     char exePath[MAX_PATH];
     std::string settingsPath = "settings.ini";
     if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
@@ -263,22 +263,21 @@ void ApplyTextureResizeHooks(ID3D11Device* pDevice) {
         }
     }
     
-    // Read settings (need to include settings.h)
-    std::ifstream file(settingsPath);
-    bool enabled = false;
-    if (file.is_open()) {
-        std::string line;
-        while (std::getline(file, line)) {
-            if (line.find("texture_resize_enabled=1") != std::string::npos) {
-                enabled = true;
-                break;
-            }
-        }
-        file.close();
-    }
+    Settings settings;
+    settings.Load(settingsPath);
+    
+    bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
+    bool textureDumpEnabled = settings.GetBool("texture_dump_enabled", false);
+    
+    // Enable resize only if widescreen is on AND texture dumping is off
+    bool enabled = widescreenEnabled && !textureDumpEnabled;
     
     if (!enabled) {
-        std::cout << "Texture resize disabled in settings" << std::endl;
+        if (textureDumpEnabled) {
+            std::cout << "Texture resize disabled (texture dumping is active)" << std::endl;
+        } else {
+            std::cout << "Texture resize disabled (widescreen is off)" << std::endl;
+        }
         g_resizeHooksApplied = true; // Mark as applied so we don't check again
         return;
     }

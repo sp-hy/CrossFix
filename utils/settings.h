@@ -10,9 +10,23 @@ public:
     bool GetBool(const std::string& key, bool defaultValue = false) const;
     std::string GetString(const std::string& key, const std::string& defaultValue = "") const;
     bool SaveDefault(const std::string& filename);
-
+    
+    // Set a value in memory
+    void Set(const std::string& key, const std::string& value);
+    void SetInt(const std::string& key, int value);
+    void SetBool(const std::string& key, bool value);
+    
+    // Update a specific key in the settings file (preserves comments and formatting)
+    bool UpdateFile(const std::string& filename, const std::string& key, const std::string& value);
+    
+    // Check if settings file exists (for first-run detection)
+    static bool FileExists(const std::string& filename);
+    
+    // Returns true if this was the first run (settings file was just created)
+    bool WasFirstRun() const { return m_wasFirstRun; }
 
 private:
     std::map<std::string, std::string> values;
     std::string Trim(const std::string& str) const;
+    bool m_wasFirstRun = false;
 };
