@@ -43,46 +43,91 @@ namespace {
             hash = HashData(pDesc, sizeof(D3D11_TEXTURE2D_DESC));
         }
         
-        // Hash initial data if available
-        if (pInitialData && pInitialData->pSysMem) {
+        // Hash initial data if available - with comprehensive validation
+        if (pInitialData && pInitialData->pSysMem && pDesc) {
             UINT rowPitch = pInitialData->SysMemPitch;
-            UINT depthPitch = pInitialData->SysMemSlicePitch;
             
-            // Calculate approximate data size (for first mip level)
-            if (pDesc) {
-                UINT bytesPerPixel = 0;
-                switch (pDesc->Format) {
-                    case DXGI_FORMAT_R8G8B8A8_UNORM:
-                    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-                    case DXGI_FORMAT_B8G8R8A8_UNORM:
-                    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-                        bytesPerPixel = 4;
-                        break;
-                    case DXGI_FORMAT_B4G4R4A4_UNORM:
-                        bytesPerPixel = 2;
-                        break;
-                    case DXGI_FORMAT_R16G16B16A16_FLOAT:
-                        bytesPerPixel = 8;
-                        break;
-                    case DXGI_FORMAT_R32G32B32A32_FLOAT:
-                        bytesPerPixel = 16;
-                        break;
-                    case DXGI_FORMAT_R8_UNORM:
-                        bytesPerPixel = 1;
-                        break;
-                    case DXGI_FORMAT_R8G8_UNORM:
-                        bytesPerPixel = 2;
-                        break;
-                    default:
-                        bytesPerPixel = 4; // Default assumption
-                        break;
-                }
-                
-                size_t dataSize = rowPitch * pDesc->Height;
-                if (dataSize > 0 && dataSize < 100 * 1024 * 1024) { // Limit to 100MB
-                    uint64_t dataHash = HashData(pInitialData->pSysMem, dataSize);
-                    hash ^= dataHash;
-                }
+            // Validate dimensions and pitch
+            if (pDesc->Height == 0 || pDesc->Width == 0 || rowPitch == 0) {
+                return hash; // Invalid dimensions, skip data hashing
+            }
+            
+            // Calculate bytes per pixel
+            UINT bytesPerPixel = 0;
+            switch (pDesc->Format) {
+                case DXGI_FORMAT_R8G8B8A8_UNORM:
+                case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+                case DXGI_FORMAT_B8G8R8A8_UNORM:
+                case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                    bytesPerPixel = 4;
+                    break;
+                case DXGI_FORMAT_B4G4R4A4_UNORM:
+                    bytesPerPixel = 2;
+                    break;
+                case DXGI_FORMAT_R16G16B16A16_FLOAT:
+                    bytesPerPixel = 8;
+                    break;
+                case DXGI_FORMAT_R32G32B32A32_FLOAT:
+                    bytesPerPixel = 16;
+                    break;
+                case DXGI_FORMAT_R8_UNORM:
+                    bytesPerPixel = 1;
+                    break;
+                case DXGI_FORMAT_R8G8_UNORM:
+                    bytesPerPixel = 2;
+                    break;
+                default:
+                    bytesPerPixel = 4; // Default assumption
+                    break;
+            }
+            
+            if (bytesPerPixel == 0) {
+                return hash; // Unknown format
+            }
+            
+            // Calculate minimum required row size
+            UINT actualRowSize = pDesc->Width * bytesPerPixel;
+            
+            // Validate that rowPitch is at least as large as actualRowSize
+            if (rowPitch < actualRowSize) {
+                return hash; // Invalid pitch, skip data hashing
+            }
+            
+            // Calculate actual buffer size: rowPitch * (height - 1) + actual last row size
+            // The last row doesn't need padding, so we can't assume full rowPitch for all rows
+            size_t dataSize;
+            if (pDesc->Height == 1) {
+                dataSize = actualRowSize;
+            } else {
+                dataSize = rowPitch * (pDesc->Height - 1) + actualRowSize;
+            }
+            
+            // Additional safety checks
+            if (dataSize == 0 || dataSize >= 100 * 1024 * 1024) {
+                return hash; // Size out of acceptable range
+            }
+            
+            // For large textures, only sample a portion to reduce crash risk and improve performance
+            // This is a trade-off: less unique hashes but much safer on problematic memory
+            size_t sampleSize = dataSize;
+            const size_t MAX_SAFE_HASH_SIZE = 64 * 1024; // Only hash first 64KB max
+            if (sampleSize > MAX_SAFE_HASH_SIZE) {
+                sampleSize = MAX_SAFE_HASH_SIZE;
+            }
+            
+            // Use IsBadReadPtr to check if memory is readable (Windows-specific)
+            if (IsBadReadPtr(pInitialData->pSysMem, sampleSize)) {
+                return hash; // Memory not readable, skip
+            }
+            
+            // Wrap in try-catch for additional safety
+            __try {
+                uint64_t dataHash = HashData(pInitialData->pSysMem, sampleSize);
+                hash ^= dataHash;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                // Access violation or other exception - just skip data hashing
+                // Hash will still be based on descriptor
             }
         }
         
@@ -518,7 +563,7 @@ namespace {
         // Example: texture_4f83cf6716f5f0c5_120x120_BGRA8.dds
         // This hash is from the filename - you can add more hashes here
 
-        g_resizeHashes.insert(0x7ce77567d5bfe806ULL); // Main Logo
+        g_resizeHashes.insert(0x30c9ba509d8378f8ULL); // Main Logo (1280x960)
 
 
         g_resizeSizes.insert({ 1024, 1024 });        // Key Items
