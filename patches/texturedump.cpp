@@ -53,8 +53,11 @@ namespace {
                 return hash; // Invalid dimensions, skip data hashing
             }
             
-            // Calculate bytes per pixel
+            // Calculate bytes per pixel or bytes per block for compressed formats
             UINT bytesPerPixel = 0;
+            UINT bytesPerBlock = 0;  // For block-compressed formats
+            bool isBlockCompressed = false;
+            
             switch (pDesc->Format) {
                 case DXGI_FORMAT_R8G8B8A8_UNORM:
                 case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
@@ -77,17 +80,39 @@ namespace {
                 case DXGI_FORMAT_R8G8_UNORM:
                     bytesPerPixel = 2;
                     break;
+                // Block-compressed formats (4x4 blocks)
+                case DXGI_FORMAT_BC1_UNORM:        // DXT1: 8 bytes per 4x4 block
+                case DXGI_FORMAT_BC1_UNORM_SRGB:
+                    bytesPerBlock = 8;
+                    isBlockCompressed = true;
+                    break;
+                case DXGI_FORMAT_BC2_UNORM:        // DXT3: 16 bytes per 4x4 block
+                case DXGI_FORMAT_BC2_UNORM_SRGB:
+                case DXGI_FORMAT_BC3_UNORM:        // DXT5: 16 bytes per 4x4 block
+                case DXGI_FORMAT_BC3_UNORM_SRGB:
+                case DXGI_FORMAT_BC7_UNORM:        // BC7: 16 bytes per 4x4 block
+                case DXGI_FORMAT_BC7_UNORM_SRGB:
+                    bytesPerBlock = 16;
+                    isBlockCompressed = true;
+                    break;
                 default:
                     bytesPerPixel = 4; // Default assumption
                     break;
             }
             
-            if (bytesPerPixel == 0) {
+            if (bytesPerPixel == 0 && bytesPerBlock == 0) {
                 return hash; // Unknown format
             }
             
             // Calculate minimum required row size
-            UINT actualRowSize = pDesc->Width * bytesPerPixel;
+            UINT actualRowSize;
+            if (isBlockCompressed) {
+                // For block-compressed formats, calculate based on 4x4 blocks
+                UINT blocksWide = (pDesc->Width + 3) / 4;
+                actualRowSize = blocksWide * bytesPerBlock;
+            } else {
+                actualRowSize = pDesc->Width * bytesPerPixel;
+            }
             
             // Validate that rowPitch is at least as large as actualRowSize
             if (rowPitch < actualRowSize) {
@@ -97,10 +122,20 @@ namespace {
             // Calculate actual buffer size: rowPitch * (height - 1) + actual last row size
             // The last row doesn't need padding, so we can't assume full rowPitch for all rows
             size_t dataSize;
-            if (pDesc->Height == 1) {
-                dataSize = actualRowSize;
+            if (isBlockCompressed) {
+                // For block-compressed formats, height is also in blocks
+                UINT blocksHigh = (pDesc->Height + 3) / 4;
+                if (blocksHigh == 1) {
+                    dataSize = actualRowSize;
+                } else {
+                    dataSize = rowPitch * (blocksHigh - 1) + actualRowSize;
+                }
             } else {
-                dataSize = rowPitch * (pDesc->Height - 1) + actualRowSize;
+                if (pDesc->Height == 1) {
+                    dataSize = actualRowSize;
+                } else {
+                    dataSize = rowPitch * (pDesc->Height - 1) + actualRowSize;
+                }
             }
             
             // Additional safety checks
@@ -146,6 +181,18 @@ namespace {
             case DXGI_FORMAT_R8G8B8A8_UNORM:
             case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
                 return "RGBA8";
+            case DXGI_FORMAT_BC1_UNORM:
+            case DXGI_FORMAT_BC1_UNORM_SRGB:
+                return "BC1_DXT1";
+            case DXGI_FORMAT_BC2_UNORM:
+            case DXGI_FORMAT_BC2_UNORM_SRGB:
+                return "BC2_DXT3";
+            case DXGI_FORMAT_BC3_UNORM:
+            case DXGI_FORMAT_BC3_UNORM_SRGB:
+                return "BC3_DXT5";
+            case DXGI_FORMAT_BC7_UNORM:
+            case DXGI_FORMAT_BC7_UNORM_SRGB:
+                return "BC7";
             default:
                 return "other";
         }
@@ -210,6 +257,10 @@ namespace {
         CreateDirectoryA((g_dumpPath + "\\BGRA4").c_str(), NULL);
         CreateDirectoryA((g_dumpPath + "\\BGRA8").c_str(), NULL);
         CreateDirectoryA((g_dumpPath + "\\RGBA8").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BC1_DXT1").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BC2_DXT3").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BC3_DXT5").c_str(), NULL);
+        CreateDirectoryA((g_dumpPath + "\\BC7").c_str(), NULL);
         CreateDirectoryA((g_dumpPath + "\\transparent").c_str(), NULL);
         CreateDirectoryA((g_dumpPath + "\\other").c_str(), NULL);
     }
@@ -224,6 +275,15 @@ namespace {
             case DXGI_FORMAT_B4G4R4A4_UNORM:
             case DXGI_FORMAT_R8_UNORM:
             case DXGI_FORMAT_R8G8_UNORM:
+            // Compressed formats
+            case DXGI_FORMAT_BC1_UNORM:        // DXT1
+            case DXGI_FORMAT_BC1_UNORM_SRGB:
+            case DXGI_FORMAT_BC2_UNORM:        // DXT3
+            case DXGI_FORMAT_BC2_UNORM_SRGB:
+            case DXGI_FORMAT_BC3_UNORM:        // DXT5
+            case DXGI_FORMAT_BC3_UNORM_SRGB:
+            case DXGI_FORMAT_BC7_UNORM:
+            case DXGI_FORMAT_BC7_UNORM_SRGB:
                 return true;
             default:
                 return false;
@@ -379,6 +439,36 @@ namespace {
                 ddsHeader.ddspf.dwBBitMask = 0;
                 ddsHeader.ddspf.dwABitMask = 0;
                 break;
+            // Block-compressed formats use FourCC codes
+            case DXGI_FORMAT_BC1_UNORM:
+            case DXGI_FORMAT_BC1_UNORM_SRGB:
+                ddsHeader.ddspf.dwFlags = 0x4; // DDPF_FOURCC
+                ddsHeader.ddspf.dwFourCC = 0x31545844; // "DXT1"
+                ddsHeader.dwFlags |= 0x80000; // DDSD_LINEARSIZE
+                ddsHeader.dwPitchOrLinearSize = ((pDesc->Width + 3) / 4) * ((pDesc->Height + 3) / 4) * 8;
+                break;
+            case DXGI_FORMAT_BC2_UNORM:
+            case DXGI_FORMAT_BC2_UNORM_SRGB:
+                ddsHeader.ddspf.dwFlags = 0x4; // DDPF_FOURCC
+                ddsHeader.ddspf.dwFourCC = 0x33545844; // "DXT3"
+                ddsHeader.dwFlags |= 0x80000; // DDSD_LINEARSIZE
+                ddsHeader.dwPitchOrLinearSize = ((pDesc->Width + 3) / 4) * ((pDesc->Height + 3) / 4) * 16;
+                break;
+            case DXGI_FORMAT_BC3_UNORM:
+            case DXGI_FORMAT_BC3_UNORM_SRGB:
+                ddsHeader.ddspf.dwFlags = 0x4; // DDPF_FOURCC
+                ddsHeader.ddspf.dwFourCC = 0x35545844; // "DXT5"
+                ddsHeader.dwFlags |= 0x80000; // DDSD_LINEARSIZE
+                ddsHeader.dwPitchOrLinearSize = ((pDesc->Width + 3) / 4) * ((pDesc->Height + 3) / 4) * 16;
+                break;
+            case DXGI_FORMAT_BC7_UNORM:
+            case DXGI_FORMAT_BC7_UNORM_SRGB:
+                ddsHeader.ddspf.dwFlags = 0x4; // DDPF_FOURCC
+                ddsHeader.ddspf.dwFourCC = 0x20495844; // "DX10" - BC7 requires DX10 extended header
+                // Note: BC7 technically needs a DDS_HEADER_DXT10 extension, but many tools accept this
+                ddsHeader.dwFlags |= 0x80000; // DDSD_LINEARSIZE
+                ddsHeader.dwPitchOrLinearSize = ((pDesc->Width + 3) / 4) * ((pDesc->Height + 3) / 4) * 16;
+                break;
             default:
                 pContext->Unmap(pStaging.Get(), 0);
                 return false; // Should not reach here if IsDumpableFormat works correctly
@@ -388,35 +478,73 @@ namespace {
         
         file.write(reinterpret_cast<const char*>(&ddsHeader), sizeof(ddsHeader));
         
-        // Calculate bytes per pixel
-        UINT bytesPerPixel = 0;
-        switch (pDesc->Format) {
-            case DXGI_FORMAT_R8G8B8A8_UNORM:
-            case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-            case DXGI_FORMAT_B8G8R8A8_UNORM:
-            case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-                bytesPerPixel = 4;
-                break;
-            case DXGI_FORMAT_B4G4R4A4_UNORM:
-            case DXGI_FORMAT_R8G8_UNORM:
-                bytesPerPixel = 2;
-                break;
-            case DXGI_FORMAT_R8_UNORM:
-                bytesPerPixel = 1;
-                break;
-        }
-        
-        UINT rowSize = pDesc->Width * bytesPerPixel;
-        
-        // Write pixel data (only write actual row size, not pitch)
+        // Write pixel data
         bool writeSuccess = true;
         try {
             const uint8_t* pData = static_cast<const uint8_t*>(mapped.pData);
-            for (UINT y = 0; y < pDesc->Height; ++y) {
-                file.write(reinterpret_cast<const char*>(pData + y * mapped.RowPitch), rowSize);
-                if (file.fail()) {
-                    writeSuccess = false;
+            
+            // Check if this is a block-compressed format
+            bool isBlockCompressed = false;
+            UINT bytesPerBlock = 0;
+            
+            switch (pDesc->Format) {
+                case DXGI_FORMAT_BC1_UNORM:
+                case DXGI_FORMAT_BC1_UNORM_SRGB:
+                    isBlockCompressed = true;
+                    bytesPerBlock = 8;
                     break;
+                case DXGI_FORMAT_BC2_UNORM:
+                case DXGI_FORMAT_BC2_UNORM_SRGB:
+                case DXGI_FORMAT_BC3_UNORM:
+                case DXGI_FORMAT_BC3_UNORM_SRGB:
+                case DXGI_FORMAT_BC7_UNORM:
+                case DXGI_FORMAT_BC7_UNORM_SRGB:
+                    isBlockCompressed = true;
+                    bytesPerBlock = 16;
+                    break;
+            }
+            
+            if (isBlockCompressed) {
+                // For block-compressed formats, write in block rows
+                UINT blocksWide = (pDesc->Width + 3) / 4;
+                UINT blocksHigh = (pDesc->Height + 3) / 4;
+                UINT blockRowSize = blocksWide * bytesPerBlock;
+                
+                for (UINT blockY = 0; blockY < blocksHigh; ++blockY) {
+                    file.write(reinterpret_cast<const char*>(pData + blockY * mapped.RowPitch), blockRowSize);
+                    if (file.fail()) {
+                        writeSuccess = false;
+                        break;
+                    }
+                }
+            } else {
+                // For uncompressed formats, calculate bytes per pixel
+                UINT bytesPerPixel = 0;
+                switch (pDesc->Format) {
+                    case DXGI_FORMAT_R8G8B8A8_UNORM:
+                    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+                    case DXGI_FORMAT_B8G8R8A8_UNORM:
+                    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                        bytesPerPixel = 4;
+                        break;
+                    case DXGI_FORMAT_B4G4R4A4_UNORM:
+                    case DXGI_FORMAT_R8G8_UNORM:
+                        bytesPerPixel = 2;
+                        break;
+                    case DXGI_FORMAT_R8_UNORM:
+                        bytesPerPixel = 1;
+                        break;
+                }
+                
+                UINT rowSize = pDesc->Width * bytesPerPixel;
+                
+                // Write pixel data (only write actual row size, not pitch)
+                for (UINT y = 0; y < pDesc->Height; ++y) {
+                    file.write(reinterpret_cast<const char*>(pData + y * mapped.RowPitch), rowSize);
+                    if (file.fail()) {
+                        writeSuccess = false;
+                        break;
+                    }
                 }
             }
         } catch (...) {
@@ -495,7 +623,7 @@ void DumpTexture2D(ID3D11Device* pDevice, ID3D11DeviceContext* pContext, ID3D11T
     std::string tempPath = g_dumpPath + "\\" + formatFolder + "\\" + filenameStr;
     
     // Check if file already exists in any folder (cache hit)
-    std::vector<std::string> foldersToCheck = {"BGRA4", "BGRA8", "RGBA8", "transparent", "other"};
+    std::vector<std::string> foldersToCheck = {"BGRA4", "BGRA8", "RGBA8", "BC1_DXT1", "BC2_DXT3", "BC3_DXT5", "BC7", "transparent", "other"};
     for (const auto& folder : foldersToCheck) {
         std::string checkPath = g_dumpPath + "\\" + folder + "\\" + filenameStr;
         try {
@@ -572,13 +700,22 @@ namespace {
         g_resizeSizes.insert({ 512, 512 });        // Key Items
         g_resizeSizes.insert({ 256, 1792 });        // Menu portraits (post battle)
         g_resizeSizes.insert({ 1164, 1166 });        // Menu compass
-        g_resizeSizes.insert({ 405, 58 });        // Menu compass arrow
+        // g_resizeSizes.insert({ 405, 58 });        // Menu compass arrow
         g_resizeSizes.insert({ 250, 45 });        // Battle hit chance anchor
         g_resizeSizes.insert({ 128, 128 }); // Menu mini avatar
         g_resizeSizes.insert({ 92, 44 });        // menu arrows
+
         // g_resizeSizes.insert({ 480, 64 }); // Battle element name container
         // g_resizeSizes.insert({ 736, 96 }); // Battle element name menu?
         // g_resizeSizes.insert({ 64, 32 }); // Battle element mini
+
+        // g_resizeSizes.insert({ 480, 64 });
+        // g_resizeSizes.insert({ 256, 192 });
+        // g_resizeSizes.insert({ 208, 112 });
+        // g_resizeSizes.insert({ 608, 224 });
+        // g_resizeSizes.insert({ 384, 192 });
+        // g_resizeSizes.insert({ 512, 64 });
+        // g_resizeSizes.insert({ 800, 88 });
 
         // Textures that are split into multiple horizontal pieces
         // Format: { {Width, Height}, NumPieces }

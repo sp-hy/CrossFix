@@ -54,7 +54,28 @@ namespace {
     }
 }
 
+bool IsBlockCompressedFormat(DXGI_FORMAT format) {
+    switch (format) {
+        case DXGI_FORMAT_BC1_UNORM:
+        case DXGI_FORMAT_BC1_UNORM_SRGB:
+        case DXGI_FORMAT_BC2_UNORM:
+        case DXGI_FORMAT_BC2_UNORM_SRGB:
+        case DXGI_FORMAT_BC3_UNORM:
+        case DXGI_FORMAT_BC3_UNORM_SRGB:
+        case DXGI_FORMAT_BC7_UNORM:
+        case DXGI_FORMAT_BC7_UNORM_SRGB:
+            return true;
+        default:
+            return false;
+    }
+}
+
 UINT GetBytesPerPixel(DXGI_FORMAT format) {
+    // Block-compressed formats can't be resized with pixel interpolation
+    if (IsBlockCompressedFormat(format)) {
+        return 0;  // Signal that this format is not supported for resizing
+    }
+    
     switch (format) {
         case DXGI_FORMAT_R8G8B8A8_UNORM:
         case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
@@ -71,6 +92,10 @@ UINT GetBytesPerPixel(DXGI_FORMAT format) {
 void CreateCenterPaddedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, std::vector<uint8_t>& buffer) {
     if (!pDesc || !pInitialData || !pInitialData->pSysMem || pInitialData->SysMemPitch == 0) return;
     if (pDesc->Width == 0 || pDesc->Height == 0) return;
+    
+    // Skip block-compressed formats - they can't be resized with pixel interpolation
+    UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
+    if (bytesPerPixel == 0) return;
     
     try {
         float widescreenRatio = GetCurrentWidescreenRatio();
@@ -90,7 +115,6 @@ void CreateCenterPaddedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRE
         // Padding for each piece (distributed evenly on both sides)
         UINT piecePadding = (pieceWidth - pieceContentWidth) / 2;
         
-        UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
         UINT rowPitch = pDesc->Width * bytesPerPixel;
         
         buffer.resize(rowPitch * pDesc->Height);
@@ -182,6 +206,10 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRES
         return;
     }
     
+    // Skip block-compressed formats - they can't be resized with pixel interpolation
+    UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
+    if (bytesPerPixel == 0) return;
+    
     try {
         float widescreenRatio = GetCurrentWidescreenRatio();
         UINT contentWidth = static_cast<UINT>(pDesc->Width * widescreenRatio);
@@ -189,7 +217,6 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC* pDesc, const D3D11_SUBRES
         if (contentWidth > pDesc->Width) contentWidth = pDesc->Width;
         
         UINT padding = (pDesc->Width - contentWidth) / 2;
-        UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
         UINT rowPitch = pDesc->Width * bytesPerPixel;
         
         buffer.resize(rowPitch * pDesc->Height);
