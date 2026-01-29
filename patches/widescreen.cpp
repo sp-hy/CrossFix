@@ -1,7 +1,7 @@
 #include "widescreen.h"
 #include "widescreen2d.h"
 #include "dialog.h"
-#include "battle.h"
+#include "battleuimenu.h"
 #include <iostream>
 
 // Dynamic monitoring state
@@ -264,17 +264,25 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				}
 			}
 
-			// Force screen type to full (1) when in widescreen mode
-			if (g_wasWidescreen) {
-				int targetScreenType = 1;
-				int currentScreenType = *(int*)screenTypeAddr;
-				if (currentScreenType != targetScreenType) {
-					WriteMemory(screenTypeAddr, &targetScreenType, sizeof(int));
-				}
+		// Force screen type to full (1) when in widescreen mode
+		if (g_wasWidescreen) {
+			// Check if FMV is playing
+			uintptr_t isFMVPlayingAddr = base + 0x71A9EC;
+			int isFMVPlaying = *(int*)isFMVPlayingAddr;
+			
+			// Set screenType to 0 if FMV is playing, otherwise 1
+			int targetScreenType = (isFMVPlaying == 1) ? 0 : 1;
+			int currentScreenType = *(int*)screenTypeAddr;
+			if (currentScreenType != targetScreenType) {
+				WriteMemory(screenTypeAddr, &targetScreenType, sizeof(int));
 			}
+		}
 
-			// Update dialog values based on aspect ratio and battle status
-			UpdateDialogValues(g_lastAspectRatio, IsInBattle());
+		// Update dialog values based on aspect ratio and battle status
+		UpdateDialogValues(g_lastAspectRatio, IsInBattle());
+		
+		// Update battle UI and menu values based on aspect ratio
+		UpdateBattleUIAndMenuValues(g_lastAspectRatio);
 		} catch (...) {
 			// Ignore errors and continue monitoring
 		}

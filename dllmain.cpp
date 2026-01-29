@@ -9,7 +9,7 @@
 #include "patches/fps.h"
 #include "patches/pausefix.h"
 #include "patches/dialog.h"
-#include "patches/battle.h"
+#include "patches/battleuimenu.h"
 #include "utils/settings.h"
 #include "utils/version.h"
 
@@ -102,7 +102,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 		}
 		
 		ApplyDialogPatch(base);
-		ApplyBattlePatch(base);
+		ApplyBattleUIAndMenuPatch(base);
 		
 		// Always start dynamic monitoring to handle resolution changes
 		StartDynamicWidescreenMonitoring(base);

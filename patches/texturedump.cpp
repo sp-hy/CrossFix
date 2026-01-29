@@ -696,14 +696,14 @@ namespace {
         // This hash is from the filename - you can add more hashes here
 
         g_resizeHashes.insert(0x30c9ba509d8378f8ULL); // Main Logo (1280x960)
-        g_resizeSizes.insert({ 1024, 1024 });        // Key Items
-        g_resizeSizes.insert({ 512, 512 });        // Key Items
-        g_resizeSizes.insert({ 256, 1792 });        // Menu portraits (post battle)
-        g_resizeSizes.insert({ 1164, 1166 });        // Menu compass
+        // g_resizeSizes.insert({ 1024, 1024 });        // Key Items
+        // g_resizeSizes.insert({ 512, 512 });        // Key Items
+        // g_resizeSizes.insert({ 256, 1792 });        // Menu portraits (post battle)
+        // g_resizeSizes.insert({ 1164, 1166 });        // Menu compass
         // g_resizeSizes.insert({ 405, 58 });        // Menu compass arrow
-        g_resizeSizes.insert({ 250, 45 });        // Battle hit chance anchor
-        g_resizeSizes.insert({ 128, 128 }); // Menu mini avatar
-        g_resizeSizes.insert({ 92, 44 });        // menu arrows
+        // g_resizeSizes.insert({ 250, 45 });        // Battle hit chance anchor
+        // g_resizeSizes.insert({ 128, 128 }); // Menu mini avatar
+        // g_resizeSizes.insert({ 92, 44 });        // menu arrows
 
         // g_resizeSizes.insert({ 480, 64 }); // Battle element name container
         // g_resizeSizes.insert({ 736, 96 }); // Battle element name menu?
@@ -719,8 +719,8 @@ namespace {
 
         // Textures that are split into multiple horizontal pieces
         // Format: { {Width, Height}, NumPieces }
-        g_splitTexturePieces[{ 512, 896 }] = 2;   // Menu portraits (menu)
-        g_splitTexturePieces[{ 528, 144 }] = 5;  // Menu Icons
+        // g_splitTexturePieces[{ 512, 896 }] = 2;   // Menu portraits (menu)
+        // g_splitTexturePieces[{ 528, 144 }] = 5;  // Menu Icons
 
 
 

@@ -204,7 +204,7 @@ bool Settings::SaveDefault(const std::string& filename) {
     file << "upscale_enabled=0" << std::endl << std::endl;
     file << "# Upscale multiplier (only used when upscale_enabled=1)" << std::endl;
     file << "# Valid values: 2, 3, or 4" << std::endl;
-    file << "# Higher values = better quality but more demanding" << std::endl;
+    file << "# Higher values = better quality but more demanding & might crash" << std::endl;
     file << "upscale_scale=4" << std::endl << std::endl;
     file << "# Enable or disable texture dumping" << std::endl;
     file << "# Dumps textures to /dump/ directory with hash-based filenames" << std::endl;
