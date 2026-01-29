@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include "upscale4k.h"
 #include "texturedump.h"
+#include "widescreen.h"
 #include <Windows.h>
 #include <algorithm>
 #include <iostream>
@@ -53,59 +54,82 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
     RSSetViewports_t pOriginal = Original_RSSetViewports;
     
     if (!pOriginal) return;
-    if (!g_viewportsHookReady) {
+    if (!pViewports || NumViewports == 0 || !g_viewportsHookReady) {
         pOriginal(This, NumViewports, pViewports);
         return;
     }
+
+    // Allocate a small buffer on stack for modified viewports
+    D3D11_VIEWPORT vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+    UINT count = std::min(NumViewports, (UINT)D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
+    memcpy(vps, pViewports, sizeof(D3D11_VIEWPORT) * count);
+
+    const float HEALTHBAR_X = 588.0f;
+    const float HEALTHBAR_Y = 792.0f;
+    const float HEALTHBAR_W = 472.0f;
+    const float EPSILON = 1.0f; 
     
-    if (NumViewports == 1 && pViewports) {
-        ID3D11RenderTargetView* rtv = nullptr;
-        This->OMGetRenderTargets(1, &rtv, nullptr);
-
-        if (rtv) {
-            ID3D11Resource* pRes = nullptr;
-            rtv->GetResource(&pRes);
-            
-            if (pRes) {
-                ID3D11Texture2D* pTex = nullptr;
-                pRes->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&pTex);
-                
-                if (pTex) {
-                    D3D11_TEXTURE2D_DESC texDesc;
-                    pTex->GetDesc(&texDesc);
-
-                    if (texDesc.Width == (UINT)g_NewWidth && texDesc.Height == (UINT)g_NewHeight) {
-                        D3D11_VIEWPORT vp = *pViewports;
-
-                        float left_ndc = 2.0f * (vp.TopLeftX / BaseWidth) - 1.0f;
-                        float top_ndc = 2.0f * (vp.TopLeftY / BaseHeight) - 1.0f;
-
-                        vp.TopLeftX = (left_ndc * g_NewWidth + g_NewWidth) / 2.0f;
-                        vp.TopLeftY = (top_ndc * g_NewHeight + g_NewHeight) / 2.0f;
-                        vp.Width = g_ResMultiplier * vp.Width;
-                        vp.Height = g_ResMultiplier * vp.Height;
-
-                        vp.TopLeftX = std::min(vp.TopLeftX, 32767.0f);
-                        vp.TopLeftY = std::min(vp.TopLeftY, 32767.0f);
-                        vp.Width = std::min(vp.Width, 32767.0f);
-                        vp.Height = std::min(vp.Height, 32767.0f);
-
-                        pOriginal(This, 1, &vp);
-
-                        pTex->Release();
-                        pRes->Release();
-                        rtv->Release();
-                        return;
-                    }
-                    pTex->Release();
+    float ratio = GetCurrentWidescreenRatio();
+    
+    // Check render target once per call
+    bool isUpscaledTarget = false;
+    ID3D11RenderTargetView* rtv = nullptr;
+    This->OMGetRenderTargets(1, &rtv, nullptr);
+    if (rtv) {
+        ID3D11Resource* pRes = nullptr;
+        rtv->GetResource(&pRes);
+        if (pRes) {
+            ID3D11Texture2D* pTex = nullptr;
+            pRes->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&pTex);
+            if (pTex) {
+                D3D11_TEXTURE2D_DESC texDesc;
+                pTex->GetDesc(&texDesc);
+                if (texDesc.Width == (UINT)g_NewWidth && texDesc.Height == (UINT)g_NewHeight) {
+                    isUpscaledTarget = true;
                 }
-                pRes->Release();
+                pTex->Release();
             }
-            rtv->Release();
+            pRes->Release();
+        }
+        rtv->Release();
+    }
+
+    for (UINT i = 0; i < count; ++i) {
+        // Detect Healthbar - Check Width and Y-coord only (was working without flicker)
+        bool isHealthbar = (std::abs(vps[i].Width - HEALTHBAR_W) < 0.1f && 
+                            std::abs(vps[i].TopLeftY - HEALTHBAR_Y) < EPSILON);
+
+        if (isHealthbar) {
+            // Store original X before width scaling
+            float originalX = vps[i].TopLeftX;
+            
+            // Apply width scaling (this was working)
+            vps[i].Width *= ratio;
+            
+            // Calculate how much X should shift based on the ORIGINAL X value
+            // If game sends X=588, shift it. If game sends a different X, shift it proportionally
+            float xOffset = originalX - HEALTHBAR_X;  // How far from the base position
+            vps[i].TopLeftX = (HEALTHBAR_X * ratio) + xOffset;
+        }
+
+        // Apply 4K Upscale logic if rendering to upscaled target
+        if (isUpscaledTarget) {
+            float left_ndc = 2.0f * (vps[i].TopLeftX / BaseWidth) - 1.0f;
+            float top_ndc = 2.0f * (vps[i].TopLeftY / BaseHeight) - 1.0f;
+
+            vps[i].TopLeftX = (left_ndc * g_NewWidth + g_NewWidth) / 2.0f;
+            vps[i].TopLeftY = (top_ndc * g_NewHeight + g_NewHeight) / 2.0f;
+            vps[i].Width *= g_ResMultiplier;
+            vps[i].Height *= g_ResMultiplier;
+
+            vps[i].TopLeftX = std::min(vps[i].TopLeftX, 32767.0f);
+            vps[i].TopLeftY = std::min(vps[i].TopLeftY, 32767.0f);
+            vps[i].Width = std::min(vps[i].Width, 32767.0f);
+            vps[i].Height = std::min(vps[i].Height, 32767.0f);
         }
     }
 
-    pOriginal(This, NumViewports, pViewports);
+    pOriginal(This, count, vps);
 }
 
 void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(ID3D11DeviceContext* This, ID3D11Resource* pDstResource, UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ, ID3D11Resource* pSrcResource, UINT SrcSubresource, const D3D11_BOX* pSrcBox, BOOL bWrapped) {
