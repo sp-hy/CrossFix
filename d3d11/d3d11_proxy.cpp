@@ -3,6 +3,7 @@
 #include <iostream>
 #include "../patches/upscale4k.h"
 #include "../patches/textureresize.h"
+#include "../patches/staminabarfix.h"
 
 static HMODULE g_hD3D11 = nullptr;
 
@@ -65,6 +66,15 @@ static DWORD SafeApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext*
     }
 }
 
+static DWORD SafeApplyStaminaBarFixPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
+    __try {
+        ApplyStaminaBarFixPatch(pDevice, pContext);
+        return 0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        return GetExceptionCode();
+    }
+}
+
 // Apply all hooks with SEH protection
 static void ApplyHooksWithProtection(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
     DWORD exCode;
@@ -74,6 +84,14 @@ static void ApplyHooksWithProtection(ID3D11Device* pDevice, ID3D11DeviceContext*
         std::cout << "Warning: Texture resize hooks failed (0x" << std::hex << exCode << std::dec << "), continuing without them" << std::endl;
     }
     
+    // Try to apply stamina bar fix first (for when upscale is disabled)
+    exCode = SafeApplyStaminaBarFixPatch(pDevice, pContext);
+    if (exCode != 0) {
+        std::cout << "Warning: Stamina bar fix hooks failed (0x" << std::hex << exCode << std::dec << "), continuing without them" << std::endl;
+    }
+    
+    // Apply upscale patch (includes stamina bar fix when enabled)
+    // If upscale is enabled, this will overwrite the stamina bar hook but includes the same logic
     exCode = SafeApplyUpscale4KPatch(pDevice, pContext);
     if (exCode != 0) {
         std::cout << "Warning: Upscale hooks failed (0x" << std::hex << exCode << std::dec << "), continuing without them" << std::endl;

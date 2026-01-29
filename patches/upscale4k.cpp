@@ -63,13 +63,32 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
     D3D11_VIEWPORT vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
     UINT count = std::min(NumViewports, (UINT)D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
     memcpy(vps, pViewports, sizeof(D3D11_VIEWPORT) * count);
-
-    const float HEALTHBAR_X = 588.0f;
-    const float HEALTHBAR_Y = 792.0f;
-    const float HEALTHBAR_W = 472.0f;
-    const float EPSILON = 1.0f; 
+    
+    // Apply stamina bar widescreen fix FIRST (before upscaling)
+    const float STAMINA_BAR_X = 588.0f;
+    const float STAMINA_BAR_Y = 792.0f;
+    const float STAMINA_BAR_W = 472.0f;
+    const float EPSILON = 1.0f;
     
     float ratio = GetCurrentWidescreenRatio();
+    
+    for (UINT i = 0; i < count; ++i) {
+        // Detect Stamina Bar - Check Width and Y-coord only
+        bool isStaminaBar = (std::abs(vps[i].Width - STAMINA_BAR_W) < 0.1f && 
+                            std::abs(vps[i].TopLeftY - STAMINA_BAR_Y) < EPSILON);
+
+        if (isStaminaBar) {
+            // Store original X before width scaling
+            float originalX = vps[i].TopLeftX;
+            
+            // Apply width scaling
+            vps[i].Width *= ratio;
+            
+            // Calculate repositioned X based on base position
+            float xOffset = originalX - STAMINA_BAR_X;
+            vps[i].TopLeftX = (STAMINA_BAR_X * ratio) + xOffset;
+        }
+    }
     
     // Check render target once per call
     bool isUpscaledTarget = false;
@@ -95,23 +114,6 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
     }
 
     for (UINT i = 0; i < count; ++i) {
-        // Detect Healthbar - Check Width and Y-coord only (was working without flicker)
-        bool isHealthbar = (std::abs(vps[i].Width - HEALTHBAR_W) < 0.1f && 
-                            std::abs(vps[i].TopLeftY - HEALTHBAR_Y) < EPSILON);
-
-        if (isHealthbar) {
-            // Store original X before width scaling
-            float originalX = vps[i].TopLeftX;
-            
-            // Apply width scaling (this was working)
-            vps[i].Width *= ratio;
-            
-            // Calculate how much X should shift based on the ORIGINAL X value
-            // If game sends X=588, shift it. If game sends a different X, shift it proportionally
-            float xOffset = originalX - HEALTHBAR_X;  // How far from the base position
-            vps[i].TopLeftX = (HEALTHBAR_X * ratio) + xOffset;
-        }
-
         // Apply 4K Upscale logic if rendering to upscaled target
         if (isUpscaledTarget) {
             float left_ndc = 2.0f * (vps[i].TopLeftX / BaseWidth) - 1.0f;
