@@ -86,10 +86,6 @@ namespace ViewportUtils {
                     float xOffset = originalX - def.baseX;
                     viewports[i].TopLeftX = (def.baseX * widescreenRatio) + xOffset;
                     
-                    // Debug logging
-                    std::cout << "PROCESSED: Original X=" << originalX << " W=" << def.width 
-                              << " -> New X=" << viewports[i].TopLeftX << " W=" << viewports[i].Width << std::endl;
-                    
                     break;
                 }
             }
