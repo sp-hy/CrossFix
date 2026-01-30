@@ -6,21 +6,18 @@
 
 // Dynamic values for dialog scaling
 static float g_xScale = 1.0f;            // X scale for dialog text (1.0 = 4:3, 0.75 = 16:9)
-static float g_letterSpacing = 640.0f;   // Letter spacing (640 = 4:3 base)
-static float g_dialogBoxWidth = 6.0f;    // Dialog box width (6.0 = 4:3, ~-94 for 16:9, ~-194 for 21:9)
+static float g_letterSpacing = 0.45f;    // Letter spacing (0.45 = 4:3 base)
 static uint32_t g_portraitWidth = 960;   // Base 960
 static float g_lastCursorWidth = 70.0f;  // Base 70.0
 
 // Memory addresses
 static uintptr_t g_cursorWidthAddr = 0;
-static uintptr_t g_letterSpacingAddr = 0;
 
 // Hook memory
 static void* g_hookMem = nullptr;
 
 bool ApplyDialogPatch(uintptr_t base) {
 	g_cursorWidthAddr = base + 0x415F8;
-	g_letterSpacingAddr = base + 0x2CBC90;
 	bool success = true;
 
 	// ============================================================
@@ -90,37 +87,26 @@ bool ApplyDialogPatch(uintptr_t base) {
 	}
 
 	// ============================================================
-	// Patch 2: Letter Spacing at CHRONOCROSS.exe+2CBC90
-	// Base value = 640 for 4:3, scale up for wider aspects
+	// Patch 2: Letter Spacing
+	// CHRONOCROSS.exe+44D11 - F3 0F59 15 E4B84D00 - mulss xmm2,[CHRONOCROSS.exe+2CB8E4]
+	// Redirect to our g_letterSpacing variable
 	// ============================================================
-	// This is a direct memory value we'll update dynamically
-	// Initial write to set up
-	if (!WriteMemory(g_letterSpacingAddr, &g_letterSpacing, sizeof(float))) {
-		std::cout << "Failed to apply letter spacing patch" << std::endl;
+	uintptr_t addr2 = base + 0x44D11 + 4;
+	uint32_t newAddress2 = (uint32_t)(uintptr_t)&g_letterSpacing;
+
+	if (!WriteMemory(addr2, &newAddress2, sizeof(uint32_t))) {
+		std::cout << "Failed to apply letter spacing redirection patch" << std::endl;
 		success = false;
 	}
 
 	// ============================================================
-	// Patch 3: Dialog Box Width
-	// CHRONOCROSS.exe+1B3D72 - F3 0F58 15 70BAE400 - addss xmm2,[CHRONOCROSS.exe+2CBA70]
-	// Redirect to our g_dialogBoxWidth variable
-	// ============================================================
-	uintptr_t addr3 = base + 0x1B3D72 + 4;
-	uint32_t newAddress3 = (uint32_t)(uintptr_t)&g_dialogBoxWidth;
-
-	if (!WriteMemory(addr3, &newAddress3, sizeof(uint32_t))) {
-		std::cout << "Failed to apply dialog box width patch" << std::endl;
-		success = false;
-	}
-
-	// ============================================================
-	// Patch 4: Character Portrait Width
+	// Patch 3: Character Portrait Width
 	// CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1, [CHRONOCROSS.exe+E2F448]
 	// ============================================================
-	uintptr_t addr4 = base + 0x415B9 + 4;
-	uint32_t newAddress4 = (uint32_t)(uintptr_t)&g_portraitWidth;
+	uintptr_t portraitAddr = base + 0x415B9 + 4;
+	uint32_t portraitVal = (uint32_t)(uintptr_t)&g_portraitWidth;
 
-	if (!WriteMemory(addr4, &newAddress4, sizeof(uint32_t))) {
+	if (!WriteMemory(portraitAddr, &portraitVal, sizeof(uint32_t))) {
 		std::cout << "Failed to apply portrait width patch" << std::endl;
 		success = false;
 	}
@@ -137,15 +123,13 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 
 	if (aspectRatio < 1.4f) {
 		// Reset to 4:3 defaults
-		if (g_xScale != 1.0f || g_letterSpacing != 640.0f || g_dialogBoxWidth != 6.0f || 
+		if (g_xScale != 1.0f || g_letterSpacing != 0.45f || 
 			g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
 			g_xScale = 1.0f;
-			g_letterSpacing = 640.0f;
-			g_dialogBoxWidth = 6.0f;
+			g_letterSpacing = 0.45f;
 			g_portraitWidth = 960;
 			g_lastCursorWidth = 70.0f;
 
-			WriteMemory(g_letterSpacingAddr, &g_letterSpacing, sizeof(float));
 			WriteMemory(g_cursorWidthAddr, &g_lastCursorWidth, sizeof(float));
 
 #ifdef _DEBUG
@@ -158,12 +142,9 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 		// X Scale: compress horizontally for widescreen (1.0 for 4:3, 0.75 for 16:9)
 		float newXScale = wideRatio;
 
-		// Letter Spacing: expand for widescreen (640 for 4:3, ~853 for 16:9)
-		float newLetterSpacing = 640.0f * aspectRatio / BASE_ASPECT;
+		// Letter Spacing: compress for widescreen (0.45 for 4:3, 0.3375 for 16:9)
+		float newLetterSpacing = 0.45f * wideRatio;
 
-		// Dialog Box Width: shrink for widescreen (6.0 for 4:3, ~-94 for 16:9, ~-194 for 21:9)
-		// Formula: 6.0 - 225 * (aspectRatio - 4/3)
-		float newDialogBoxWidth = 6.0f - 225.0f * (aspectRatio - BASE_ASPECT);
 
 		// Portrait Width: compress for widescreen
 		uint32_t newPortrait = (uint32_t)(960.0f * wideRatio);
@@ -172,22 +153,18 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 		float newCursorWidth = 70.0f * wideRatio;
 
 		if (g_xScale != newXScale || g_letterSpacing != newLetterSpacing || 
-			g_dialogBoxWidth != newDialogBoxWidth || g_portraitWidth != newPortrait || 
-			g_lastCursorWidth != newCursorWidth) {
+			g_portraitWidth != newPortrait || g_lastCursorWidth != newCursorWidth) {
 			
 			g_xScale = newXScale;
 			g_letterSpacing = newLetterSpacing;
-			g_dialogBoxWidth = newDialogBoxWidth;
 			g_portraitWidth = newPortrait;
 			g_lastCursorWidth = newCursorWidth;
 
-			WriteMemory(g_letterSpacingAddr, &g_letterSpacing, sizeof(float));
 			WriteMemory(g_cursorWidthAddr, &g_lastCursorWidth, sizeof(float));
 
 #ifdef _DEBUG
 			std::cout << "Dialog updated: XScale=" << g_xScale 
 					  << ", LetterSpacing=" << g_letterSpacing 
-					  << ", BoxWidth=" << g_dialogBoxWidth
 					  << ", Portrait=" << g_portraitWidth 
 					  << ", Cursor=" << g_lastCursorWidth 
 					  << " for aspect ratio " << aspectRatio << std::endl;
