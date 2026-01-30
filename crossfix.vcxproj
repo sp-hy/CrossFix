@@ -111,6 +111,7 @@
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
     <ClCompile Include="utils\version.cpp" />
+    <ClCompile Include="utils\viewport_utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include=".gitignore" />
@@ -131,6 +132,7 @@
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
     <ClInclude Include="utils\version.h" />
+    <ClInclude Include="utils\viewport_utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

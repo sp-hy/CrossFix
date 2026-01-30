@@ -4,6 +4,7 @@
 #include "upscale4k.h"
 #include "texturedump.h"
 #include "widescreen.h"
+#include "../utils/viewport_utils.h"
 #include <Windows.h>
 #include <algorithm>
 #include <iostream>
@@ -61,34 +62,16 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext* This, UINT Num
 
     // Allocate a small buffer on stack for modified viewports
     D3D11_VIEWPORT vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    UINT count = std::min(NumViewports, (UINT)D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
-    memcpy(vps, pViewports, sizeof(D3D11_VIEWPORT) * count);
+    UINT count = ViewportUtils::CopyViewportsToBuffer(
+        vps,
+        D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE,
+        pViewports,
+        NumViewports
+    );
     
     // Apply stamina bar widescreen fix FIRST (before upscaling)
-    const float STAMINA_BAR_X = 588.0f;
-    const float STAMINA_BAR_Y = 792.0f;
-    const float STAMINA_BAR_W = 472.0f;
-    const float EPSILON = 1.0f;
-    
     float ratio = GetCurrentWidescreenRatio();
-    
-    for (UINT i = 0; i < count; ++i) {
-        // Detect Stamina Bar - Check Width and Y-coord only
-        bool isStaminaBar = (std::abs(vps[i].Width - STAMINA_BAR_W) < 0.1f && 
-                            std::abs(vps[i].TopLeftY - STAMINA_BAR_Y) < EPSILON);
-
-        if (isStaminaBar) {
-            // Store original X before width scaling
-            float originalX = vps[i].TopLeftX;
-            
-            // Apply width scaling
-            vps[i].Width *= ratio;
-            
-            // Calculate repositioned X based on base position
-            float xOffset = originalX - STAMINA_BAR_X;
-            vps[i].TopLeftX = (STAMINA_BAR_X * ratio) + xOffset;
-        }
-    }
+    ViewportUtils::ApplyStaminaBarWidescreenFix(vps, count, ratio);
     
     // Check render target once per call
     bool isUpscaledTarget = false;
