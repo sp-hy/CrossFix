@@ -196,6 +196,9 @@ bool RestoreDefaultBehavior(uintptr_t base) {
 	
 	std::cout << "Restored default (4:3) behavior" << std::endl;
 	
+	// Reset widescreen ratio to 1.0 (no scaling)
+	g_widescreenRatio3D = 1.0f;
+	
 	// Also disable 2D widescreen
 	SetWidescreen2DEnabled(false);
 	g_wasWidescreen = false;
