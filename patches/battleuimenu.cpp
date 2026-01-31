@@ -73,21 +73,47 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 	}
 
 	// ============================================================
-	// Patch 5: CHRONOCROSS.exe+336FA - Menu Containers
-	// Original: movd xmm1,[CHRONOCROSS.exe+E2F440] { (1280) }
-	// Instruction: 66 0F6E 0D 40F49A01 (movd xmm1,[abs32])
-	// Base value 1280 for 4:3, decreases with wider aspect ratios
+	// Patch 5: CHRONOCROSS.exe+17BEA8 - Shop Menu
+	// Original: movd xmm0,[CHRONOCROSS.exe+E2F444] { (960) }
+	// Instruction: 66 0F6E 05 44F40301 (movd xmm0,[abs32])
 	// ============================================================
-	uintptr_t addr5 = base + 0x336FA + 4; // +4 to skip opcode (66 0F 6E 0D), points to address operand
+	uintptr_t addr5 = base + 0x17BEA8 + 4; // +4 to skip opcode (66 0F 6E 05), points to address operand
 	uint32_t newAddress5 = (uint32_t)(uintptr_t)&g_baseRes;
 
 	if (!WriteMemory(addr5, &newAddress5, sizeof(uint32_t))) {
-		std::cout << "Failed to apply battle UI/menu patch 5 (movd xmm1)" << std::endl;
+		std::cout << "Failed to apply battle UI/menu patch 5 (shopMenu)" << std::endl;
 		success = false;
 	}
 
 	// ============================================================
-	// Patch 6: Battle UI Element Position Scaling at CHRONOCROSS.exe+1CF28
+	// Patch 6: CHRONOCROSS.exe+294E4 - Menu Compass Hand
+	// Original: movd xmm1,[CHRONOCROSS.exe+E2F440] { (1280) }
+	// Instruction: 66 0F6E 0D 40F40301 (movd xmm1,[abs32])
+	// ============================================================
+	uintptr_t addr6 = base + 0x294E4 + 4; // +4 to skip opcode (66 0F 6E 0D), points to address operand
+	uint32_t newAddress6 = (uint32_t)(uintptr_t)&g_baseRes;
+
+	if (!WriteMemory(addr6, &newAddress6, sizeof(uint32_t))) {
+		std::cout << "Failed to apply battle UI/menu patch 6 (menu compass hand)" << std::endl;
+		success = false;
+	}
+
+	// ============================================================
+	// Patch 7: CHRONOCROSS.exe+336FA - Menu Containers
+	// Original: movd xmm1,[CHRONOCROSS.exe+E2F440] { (1280) }
+	// Instruction: 66 0F6E 0D 40F49A01 (movd xmm1,[abs32])
+	// Base value 1280 for 4:3, decreases with wider aspect ratios
+	// ============================================================
+	uintptr_t addr7 = base + 0x336FA + 4; // +4 to skip opcode (66 0F 6E 0D), points to address operand
+	uint32_t newAddress7 = (uint32_t)(uintptr_t)&g_baseRes;
+
+	if (!WriteMemory(addr7, &newAddress7, sizeof(uint32_t))) {
+		std::cout << "Failed to apply battle UI/menu patch 7 (movd xmm1)" << std::endl;
+		success = false;
+	}
+
+	// ============================================================
+	// Patch 8: Battle UI Element Position Scaling at CHRONOCROSS.exe+1CF28
 	// Original: movups [eax],xmm0 (0F 11 00) - 3 bytes
 	// Next instruction at +1CF2B: mov [eax+10],00000000 (C7 40 10 00 00 00 00)
 	// At this point, [eax] contains a 2-byte position value and [eax+4] contains
@@ -222,7 +248,7 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 		jmpPatch[9] = 0x90;
 		
 		if (!WriteMemory(hookAddr6, jmpPatch, 10)) {
-			std::cout << "Failed to apply battle UI/menu patch 6 (movups hook)" << std::endl;
+			std::cout << "Failed to apply battle UI/menu patch 8 (movups hook)" << std::endl;
 			success = false;
 		}
 	}
