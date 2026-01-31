@@ -10,6 +10,7 @@
 #include "patches/pausefix.h"
 #include "patches/dialog.h"
 #include "patches/battleuimenu.h"
+#include "patches/misc.h"
 #include "utils/settings.h"
 #include "utils/version.h"
 
@@ -119,6 +120,8 @@ DWORD WINAPI MainThread(LPVOID param) {
 	} else {
 		std::cout << "Disable pause on focus loss disabled in settings" << std::endl;
 	}
+
+	ApplyVerticalBorderRemoverPatch(base);
 
 	return 0;
 }
