@@ -199,7 +199,8 @@ bool RestoreDefaultBehavior(uintptr_t base) {
 	// Reset widescreen ratio to 1.0 (no scaling)
 	g_widescreenRatio3D = 1.0f;
 	
-	// Also disable 2D widescreen
+	// Also disable 2D widescreen and reset its ratio
+	SetWidescreen2DRatio(1.0f);
 	SetWidescreen2DEnabled(false);
 	g_wasWidescreen = false;
 	
@@ -259,10 +260,8 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 				} else if (isWidescreen && aspectRatioChanged) {
 					// We just need to update the ratio, ApplyWidescreenPatch handles everything
 					if (ApplyWidescreenPatch(base, aspectRatio)) {
-						if (!g_wasWidescreen) {
-							SetWidescreen2DEnabled(true);
-							g_wasWidescreen = true;
-						}
+						// Always enable 2D widescreen when applying widescreen patch
+						SetWidescreen2DEnabled(true);
 					}
 				}
 			}
