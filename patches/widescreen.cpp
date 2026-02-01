@@ -17,7 +17,7 @@ static unsigned char g_originalBytes2[8] = {0};
 static bool g_originalBytesSaved = false;
 
 // Dynamic widescreen ratio (calculated from aspect ratio)
-static float g_widescreenRatio3D = 0.75f; // Default to 16:9
+static float g_widescreenRatio3D = 1.0f; // Default to 4:3 (no scaling)
 
 // Universal widescreen hook - uses dynamic ratio
 __declspec(naked) void WidescreenHookUniversal() {

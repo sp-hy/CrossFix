@@ -44,7 +44,14 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports_StaminaBarFix(ID3D11DeviceContext* 
     );
 
     float ratio = GetCurrentWidescreenRatio();
-    ViewportUtils::ApplyStaminaBarWidescreenFix(vps, count, ratio);
+    
+    // Only apply the fix if we're actually in widescreen mode
+    // Use tolerance to account for floating-point precision
+    // Ratio should be < 1.0 for widescreen (e.g., 0.75 for 16:9)
+    const float WIDESCREEN_THRESHOLD = 0.99f;
+    if (ratio < WIDESCREEN_THRESHOLD) {
+        ViewportUtils::ApplyStaminaBarWidescreenFix(vps, count, ratio);
+    }
 
     pOriginal(This, count, vps);
 }
