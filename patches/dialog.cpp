@@ -268,7 +268,7 @@ bool ApplyDialogPatch(uintptr_t base) {
 	}
 
 	if (success) {
-		std::cout << "Dialog patch applied (including cursor position hook)" << std::endl;
+		std::cout << "Dialog patch applied" << std::endl;
 	}
 
 	return success;

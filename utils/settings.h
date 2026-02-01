@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <map>
+#include <vector>
 
 class Settings {
 public:
@@ -24,6 +25,12 @@ public:
     
     // Returns true if this was the first run (settings file was just created)
     bool WasFirstRun() const { return m_wasFirstRun; }
+    
+    // Check if a key exists in the loaded settings
+    bool HasKey(const std::string& key) const;
+    
+    // Get list of all required settings keys
+    static std::vector<std::string> GetRequiredKeys();
 
 private:
     std::map<std::string, std::string> values;

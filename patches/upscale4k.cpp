@@ -275,7 +275,7 @@ void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext) {
                 std::cout << "Select upscale multiplier:" << std::endl;
                 std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
                 std::cout << "  3 - 3x - Balanced" << std::endl;
-                std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
+                std::cout << "  4 - 4x - Best quality, most demanding, may crash" << std::endl;
                 std::cout << std::endl;
                 std::cout << "Enter scale (2/3/4): ";
                 

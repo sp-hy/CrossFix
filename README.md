@@ -7,13 +7,16 @@ Supports the latest Steam release v1.0.1.0
 ## Features
 
 - **Dynamic Widescreen** - Automatically scales to any aspect ratio (16:9, 21:9, 32:9, etc.)
+- **Texture Resizing** - Pillarboxing for UI textures to prevent stretching on widescreen
+- **UI Scaling** - Battle UI, healthbars, dialog boxes, and shop menus properly scale with aspect ratio
 - **60 FPS Mode** - Unlock the frame rate to 60 FPS everywhere
 - **Upscaling (2x/3x/4x)** - High resolution rendering for 3D elements (experimental)
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 
 ## Todo:
-- Unstretch Dialogs
 - PXGP
+- Minor remaining UI bugs
+- Fix camera borders so it doesn't go out into black space
 - Modding Framework to use mods folder instead of dat/zips
 
 ## Installation
@@ -24,7 +27,7 @@ Supports the latest Steam release v1.0.1.0
 4. (Optional) Edit the `settings.ini` that is automatically generated on first run
 
 Wine/Proton users should use the following:
-`WINEDLLOVERRIDES="d3d11=n,b" %command%`
+`ENABLE_GAMESCOPE_WSI=0` and `WINEDLLOVERRIDES="d3d11=n,b" %command%`
 
 
 ## Settings

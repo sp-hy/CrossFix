@@ -70,6 +70,29 @@ bool Settings::Load(const std::string& filename) {
     }
 
     file.close();
+    
+    // Validate that all required keys exist
+    std::vector<std::string> requiredKeys = GetRequiredKeys();
+    bool allKeysPresent = true;
+    for (const auto& key : requiredKeys) {
+        if (!HasKey(key)) {
+            allKeysPresent = false;
+            break;
+        }
+    }
+    
+    // If any required keys are missing, regenerate the settings file
+    if (!allKeysPresent) {
+        std::cout << "[CrossFix] Settings file is missing required keys. Regenerating with defaults..." << std::endl;
+        values.clear(); // Clear existing values
+        m_wasFirstRun = true;
+        if (!SaveDefault(filename)) {
+            return false;
+        }
+        // Reload the regenerated file
+        return Load(filename);
+    }
+    
     return true;
 }
 
@@ -219,3 +242,18 @@ bool Settings::SaveDefault(const std::string& filename) {
     return true;
 }
 
+bool Settings::HasKey(const std::string& key) const {
+    return values.find(key) != values.end();
+}
+
+std::vector<std::string> Settings::GetRequiredKeys() {
+    return {
+        "widescreen_enabled",
+        "double_fps_mode",
+        "disable_pause_on_focus_loss",
+        "upscale_enabled",
+        "upscale_scale",
+        "texture_dump_enabled",
+        "upscale_setup_completed"
+    };
+}
