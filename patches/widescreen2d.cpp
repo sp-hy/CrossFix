@@ -126,6 +126,8 @@ __declspec(naked) void HookCave() {
         // Extract room X from ViewportRect (offset +0 for x field)
         mov edx, [eax + 0]  // edx = room X
 
+        // Save room width for boundaries calculation later
+        push ebx                      // Save original room width on stack
         
         // === Transform the layer ===
         // At this point:
@@ -185,12 +187,71 @@ __declspec(naked) void HookCave() {
         // Write new layer X
         mov word ptr [ebp-3Ch], si
         
+        // === Boundaries Patch ===
+        // Calculate camera boundaries based on NEW room width
+        // Formula: left_boundary = (new_room_width - 320) / 2, right_boundary = -left_boundary
+        
+        // Recalculate new room width from original room width
+        // Original room width is at [esp+8]
+        mov ebx, [esp + 8]            // ebx = original room width
+        
+        // Calculate new room width: original * ratio
+        cvtsi2ss xmm0, ebx
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1
+        cvttss2si ebx, xmm0           // ebx = new room width
+        
+        // Calculate (new_room_width - 320) / 2
+        sub ebx, 320                  // ebx = new_room_width - 320
+        sar ebx, 1                    // ebx = (new_room_width - 320) / 2 = left boundary
+        
+        // Clamp left boundary to minimum of 0
+        test ebx, ebx                 // Check if ebx < 0
+        jge left_boundary_ok          // If >= 0, skip clamping
+        xor ebx, ebx                  // Set ebx to 0
+    left_boundary_ok:
+        
+        // Calculate right boundary (negative of left)
+        mov ecx, ebx                  // ecx = left boundary
+        neg ecx                       // ecx = -left boundary = right boundary
+        
+        // Clamp right boundary to maximum of 0
+        test ecx, ecx                 // Check if ecx > 0
+        jle right_boundary_ok         // If <= 0, skip clamping
+        xor ecx, ecx                  // Set ecx to 0
+    right_boundary_ok:
+        
+        // Get base address of CHRONOCROSS.exe
+        push eax
+        push edx
+        push 0
+        call GetModuleHandleA
+        test eax, eax
+        jz skip_boundaries
+        
+        // Calculate address for left boundary (CHRONOCROSS.exe+719270)
+        mov edi, eax                  // edi = base address
+        add edi, 719270h              // edi = base + 0x719270
+        
+        // Write left boundary (2-byte signed)
+        mov word ptr [edi], bx
+        
+        // Calculate address for right boundary (CHRONOCROSS.exe+719272)
+        add edi, 2                    // edi = base + 0x719272
+        
+        // Write right boundary (2-byte signed)
+        mov word ptr [edi], cx
+        
+skip_boundaries:
+        pop edx
+        pop eax
+        
         // Clean up stack
-        add esp, 8                    // Remove both room values
+        add esp, 12                   // Remove old room width, old room X, and new room X
         jmp skip_transform
         
 cleanup_and_skip:
-        add esp, 8                    // Remove both pushed values
+        add esp, 12                   // Remove all three pushed values
 
         
 skip_transform:
