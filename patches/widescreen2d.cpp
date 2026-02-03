@@ -1,17 +1,77 @@
+/*
+ * Widescreen 2D System
+ * 
+ * This system handles widescreen transformations for 2D background layers in Chrono Cross.
+ * Instead of relying on layer 0 as a reference, it uses actual room dimension data from
+ * roomData.cpp to accurately scale and position each layer independently.
+ * 
+ * The hook intercepts layer processing during level load and:
+ * 1. Extracts the room name from the file path
+ * 2. Looks up the room's viewport dimensions (width, X offset) from RoomData
+ * 3. Calculates the new scaled dimensions based on the widescreen ratio
+ * 4. Applies transformations to each layer's width and X position
+ * 
+ * This approach ensures consistent and accurate widescreen rendering across all rooms.
+ */
+
 #include "widescreen2d.h"
-#include <iostream>
+#include "../data/roomData.h"
 #include <cmath>
 
-static bool g_widescreen2DEnabled = false;
-static float g_widescreenRatio = 0.75f; // 16:9 by default
-static LPVOID g_hookAddress = nullptr;
-static BYTE g_originalBytes[16] = {0};
-static const int g_hookSize = 5; // Size of JMP instruction
+// Global variables
+bool g_widescreen2DEnabled = true;
+float g_widescreenRatio = 0.75f;
 
-// Storage for layer 0's original BG width and X position
-static short g_originalBgWidth = 0;
-static short g_originalBgX = 0;
-static short g_newBgX = 0;
+// Hook-related globals
+static LPVOID g_hookAddress = nullptr;
+static BYTE g_originalBytes[16];
+
+
+// C++ wrapper function to get room data from path string
+// This is called from assembly, so we use __cdecl and keep it simple
+extern "C" const ViewportRect* __cdecl GetRoomDataFromPath(const char* path) {
+    // Validate pointer
+    if (!path || IsBadReadPtr(path, 1)) {
+        return nullptr;
+    }
+    
+    // Find the last backslash or forward slash
+    const char* lastSlash = path;
+    for (const char* p = path; *p && !IsBadReadPtr(p, 1); p++) {
+        if (*p == '\\' || *p == '/') {
+            lastSlash = p + 1;
+        }
+    }
+    
+    const char* filename = lastSlash;
+    
+    // Find the first dot
+    const char* dot = nullptr;
+    for (const char* p = filename; *p && !IsBadReadPtr(p, 1); p++) {
+        if (*p == '.') {
+            dot = p;
+            break;
+        }
+    }
+    
+    // Extract room name
+    char roomName[64];
+    size_t len = dot ? (size_t)(dot - filename) : 0;
+    if (len == 0) {
+        for (const char* p = filename; *p && !IsBadReadPtr(p, 1); p++) len++;
+    }
+    if (len >= 64) len = 63;
+    if (len == 0) return nullptr;
+    
+    for (size_t i = 0; i < len; i++) {
+        roomName[i] = filename[i];
+    }
+    roomName[len] = '\0';
+    
+    // Look up room data
+    std::string roomNameStr(roomName);
+    return RoomData::get(roomNameStr);
+}
 
 // The cave where our custom code will execute
 __declspec(naked) void HookCave() {
@@ -19,10 +79,12 @@ __declspec(naked) void HookCave() {
         // Execute the original instruction first
         mov eax, [ebp-70h]
         
-        // Save only the registers we'll modify (not eax - we need it!)
+        // Save all registers we'll use
         push ebx
         push ecx
         push edx
+        push esi
+        push edi
         pushfd
         
         // Check if widescreen is enabled
@@ -30,113 +92,118 @@ __declspec(naked) void HookCave() {
         test cl, cl
         jz skip_transform
         
-        // Check if width is large enough (skip invalid entries)
-        // Only process if width > 0
-        movsx ecx, word ptr [ebp-38h]  // Read as signed word
+        // Check if width is valid (skip invalid entries)
+        movsx ecx, word ptr [ebp-38h]  // Read layer width as signed word
         test ecx, ecx
         jle skip_transform
         
-        // Check layer index (now in eax)
+        // === Get room data from path (for every layer) ===
+        // Get the address of the room path string at [ebp+70h]
+        lea esi, [ebp+70h]
+        test esi, esi
+        jz skip_transform
+        
+        // Save current ESP and align stack to 16 bytes for C++ call
+        mov edi, esp
+        and esp, 0FFFFFFF0h
+        sub esp, 12              // Subtract 12 so after push (4 bytes) we're at 16-byte aligned
+        
+        // Call GetRoomDataFromPath(path)
+        push esi                 // Now ESP is 16-byte aligned
+        call GetRoomDataFromPath
+        
+        // Restore original stack pointer
+        mov esp, edi
+
+        
+        // eax now contains ViewportRect* (or nullptr)
         test eax, eax
-        jnz process_overlay
+        jz skip_transform  // If no room data found, skip transformation entirely
         
-        // === LAYER 0 (Background) Processing ===
-process_background:
-        // Read original width and X from ebp-relative locations
-        movsx ecx, word ptr [ebp-38h]  // ecx = original width (sign-extended)
-        movsx edx, word ptr [ebp-3Ch]  // edx = original X (sign-extended)
+        // Extract room width from ViewportRect (offset +8 for width field)
+        mov ebx, [eax + 8]  // ebx = room width
         
-        // Sanity check width
+        // Extract room X from ViewportRect (offset +0 for x field)
+        mov edx, [eax + 0]  // edx = room X
+
+        
+        // === Transform the layer ===
+        // At this point:
+        // ebx = room width (original)
+        // edx = room X (original)
+        // ecx = layer width (original, from earlier)
+        
+        // Save original room X for later calculation
+        push edx                      // Save original room X on stack
+        
+        // Calculate new room width
+        cvtsi2ss xmm0, ebx
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1
+        cvttss2si edi, xmm0           // edi = new room width
+        
+        // Calculate centering offset for room
+        sub ebx, edi                  // ebx = original room width - new room width
+        sar ebx, 1                    // ebx = padding
+        
+        add edx, ebx                  // edx = new room X
+        push edx                      // Save new room X on stack
+        
+        // Now transform the layer
+        // Read layer's original width and X and SAVE them in registers
+        movsx ebx, word ptr [ebp-38h]  // ebx = layer width (ORIGINAL - save it!)
+        movsx edi, word ptr [ebp-3Ch]  // edi = layer X (ORIGINAL - save it!)
+        
+        // Calculate new layer width (use ecx for calculation)
+        mov ecx, ebx                  // ecx = original width
+        cvtsi2ss xmm0, ecx
+        movss xmm1, dword ptr [g_widescreenRatio]
+        mulss xmm0, xmm1
+        cvttss2si ecx, xmm0           // ecx = new layer width
+        
+        // Validate new width
         test ecx, ecx
-        jle skip_transform
+        jle cleanup_and_skip          // Skip if invalid
         cmp ecx, 10000
-        jge skip_transform
+        jge cleanup_and_skip
         
-        // Store for later use by overlays
-        mov word ptr [g_originalBgWidth], cx
-        mov word ptr [g_originalBgX], dx
+        // Write new layer width
+        mov word ptr [ebp-38h], cx
         
-        // Calculate new width
-        cvtsi2ss xmm0, ecx
+        // Calculate new layer X using formula: x_new = newRoomX + (x_old - roomX) * ratio
+        // edi still contains original layer X
+        mov esi, edi                  // esi = original layer X
+        sub esi, [esp + 4]            // esi = x_old - roomX (read directly from stack)
+        
+        cvtsi2ss xmm0, esi
         movss xmm1, dword ptr [g_widescreenRatio]
         mulss xmm0, xmm1
-        cvttss2si ebx, xmm0           // ebx = new width
+        cvttss2si esi, xmm0           // esi = (x_old - roomX) * ratio
         
-        // Calculate centering offset
-        sub ecx, ebx                  // ecx = original - new
-        sar ecx, 1                    // ecx = padding
+        add esi, [esp]                // esi = newRoomX + scaled offset (read directly from stack)
         
-        add edx, ecx                  // edx = new X
-        mov word ptr [g_newBgX], dx
+        // Write new layer X
+        mov word ptr [ebp-3Ch], si
         
-        // Validate values before writing
-        test ebx, ebx
-        jle skip_transform            // Skip if new width <= 0
-        cmp ebx, 10000
-        jge skip_transform            // Skip if new width too large
-        
-        // Write back to memory (use words, not dwords)
-        mov word ptr [ebp-38h], bx    // Store new width (16-bit)
-        mov word ptr [ebp-3Ch], dx    // Store new X (16-bit)
-        
+        // Clean up stack
+        add esp, 8                    // Remove both room values
         jmp skip_transform
         
-        // === LAYER 1+ (Overlay) Processing ===
-process_overlay:
-        // Read values from ebp
-        movsx edx, word ptr [ebp-38h]  // edx = original layer width
-        movsx ebx, word ptr [g_originalBgWidth]
-        
-        // Check if same width as BG
-        cmp edx, ebx
-        je process_as_background
-        
-        // Resize width
-        cvtsi2ss xmm0, edx
-        movss xmm1, dword ptr [g_widescreenRatio]
-        mulss xmm0, xmm1
-        cvttss2si edx, xmm0           // edx = new width
-        mov word ptr [ebp-38h], dx    // Store new width (16-bit)
-        
-        // Calculate new X using formula: x_new = bgXNew + (x_old - bgX) * ratio
-        movsx ecx, word ptr [ebp-3Ch]  // ecx = x_old
-        movsx ebx, word ptr [g_originalBgX]
-        sub ecx, ebx                  // ecx = x_old - bgX
-        
-        cvtsi2ss xmm0, ecx
-        movss xmm1, dword ptr [g_widescreenRatio]
-        mulss xmm0, xmm1
-        cvttss2si ecx, xmm0           // ecx = (x_old - bgX) * ratio
-        
-        movsx ebx, word ptr [g_newBgX]
-        add ecx, ebx                  // ecx = bgXNew + scaled offset
-        mov word ptr [ebp-3Ch], cx    // Store new X (16-bit)
-        
-        jmp skip_transform
-        
-process_as_background:
-        // Same width as BG - treat like background
-        mov ecx, edx                  // ecx = original width
-        
-        cvtsi2ss xmm0, ecx
-        movss xmm1, dword ptr [g_widescreenRatio]
-        mulss xmm0, xmm1
-        cvttss2si edx, xmm0           // edx = new width
-        mov word ptr [ebp-38h], dx    // Store new width (16-bit)
-        
-        sub ecx, edx                  // ecx = padding
-        sar ecx, 1
-        
-        movsx edx, word ptr [ebp-3Ch]
-        add edx, ecx
-        mov word ptr [ebp-3Ch], dx    // Store new X (16-bit)
+cleanup_and_skip:
+        add esp, 8                    // Remove both pushed values
+
         
 skip_transform:
-        // Restore registers in reverse order (eax is already set correctly)
+        // Restore registers in reverse order
         popfd
+        pop edi
+        pop esi
         pop edx
         pop ecx
         pop ebx
+        
+        // CRITICAL: Restore EAX to the layer index (it was clobbered by GetRoomDataFromPath)
+        mov eax, [ebp-70h]
         
         // Execute the second original instruction that we NOPed: mov edx,[ebp-38]
         // This loads the (now modified) width into edx
@@ -152,7 +219,6 @@ bool InitWidescreen2DHook() {
     // Get the base address of CHRONOCROSS.exe
     HMODULE hModule = GetModuleHandleA("CHRONOCROSS.exe");
     if (!hModule) {
-        std::cerr << "[Widescreen2D] Failed to get CHRONOCROSS.exe module handle" << std::endl;
         return false;
     }
     
@@ -180,7 +246,6 @@ bool InitWidescreen2DHook() {
     // Write the CALL instruction
     DWORD oldProtect;
     if (!VirtualProtect(g_hookAddress, actualHookSize, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        std::cerr << "[Widescreen2D] Failed to change memory protection" << std::endl;
         return false;
     }
     

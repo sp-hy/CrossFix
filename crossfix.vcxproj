@@ -109,6 +109,7 @@
     <ClCompile Include="patches\dialog.cpp" />
     <ClCompile Include="patches\battleuimenu.cpp" />
     <ClCompile Include="patches\misc.cpp" />
+    <ClCompile Include="data\roomData.cpp" />
     <ClCompile Include="utils\memory.cpp" />
     <ClCompile Include="utils\settings.cpp" />
     <ClCompile Include="utils\version.cpp" />
@@ -131,6 +132,7 @@
     <ClInclude Include="patches\dialog.h" />
     <ClInclude Include="patches\battleuimenu.h" />
     <ClInclude Include="patches\misc.h" />
+    <ClInclude Include="data\roomData.h" />
     <ClInclude Include="utils\memory.h" />
     <ClInclude Include="utils\settings.h" />
     <ClInclude Include="utils\version.h" />
