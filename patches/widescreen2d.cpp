@@ -24,6 +24,10 @@
 bool g_widescreen2DEnabled = true;
 float g_widescreenRatio = 0.75f;
 volatile bool g_boundaryOverridesEnabled = false;
+static float g_widescreenThreshold = 0.99f;
+static int g_boundaryMargin = 0;
+
+
 
 // Boundary override state
 static volatile int16_t g_targetLeftBoundary = 0;
@@ -43,7 +47,8 @@ DWORD WINAPI BoundaryOverrideThread(LPVOID param) {
     int16_t* rightPtr = (int16_t*)(baseAddr + 0x719272);
 
     while (!g_stopOverrideThread) {
-        if (g_boundaryOverridesEnabled && !IsInBattle()) {
+        if (g_boundaryOverridesEnabled && !IsInBattle() && g_widescreenRatio < g_widescreenThreshold) {
+
             // Force write the target values
             // These are in the data segment, but let's be safe
             *leftPtr = g_targetLeftBoundary;
@@ -236,7 +241,13 @@ __declspec(naked) void HookCave() {
         mov word ptr [ebp-3Ch], si
         
         // === Boundaries Patch ===
+        // On 4:3 we shouldn't write any boundary overrides at all
+        movss xmm0, dword ptr [g_widescreenRatio]
+        comiss xmm0, dword ptr [g_widescreenThreshold]
+        jae skip_boundaries           // Skip boundary overrides if ratio >= 0.99 (4:3 or taller)
+
         // Calculate camera boundaries based on NEW room width
+
         // Formula: left_boundary = (new_room_width - 320) / 2, right_boundary = -left_boundary
         
         // Recalculate new room width from original room width
@@ -258,6 +269,11 @@ __declspec(naked) void HookCave() {
         jge left_boundary_ok          // If >= 0, skip clamping
         xor ebx, ebx                  // Set ebx to 0
     left_boundary_ok:
+        
+        // Add expansion margin based on aspect ratio
+        add ebx, [g_boundaryMargin]
+
+
         
         // Calculate right boundary (negative of left)
         mov ecx, ebx                  // ecx = left boundary
@@ -406,10 +422,17 @@ bool InitWidescreen2DHook() {
 
 void SetWidescreen2DRatio(float ratio) {
     g_widescreenRatio = ratio;
-#ifdef _DEBUG
-    std::cout << "[Widescreen2D] Ratio set to: " << ratio << std::endl;
-#endif
+    
+    // Calculate expansion margin: Margin = 15 - 16 * ratio
+    // 16:9 (0.75) -> 3
+    // 21:9 (0.5714) -> ~5.86 (rounds to 6)
+    // 32:9 (0.375) -> 9
+    float margin = 15.0f - 16.0f * ratio;
+    if (margin < 0.0f) margin = 0.0f;
+    g_boundaryMargin = (int)std::round(margin);
 }
+
+
 
 void SetWidescreen2DEnabled(bool enabled) {
     g_widescreen2DEnabled = enabled;
