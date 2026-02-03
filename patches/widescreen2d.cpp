@@ -15,12 +15,60 @@
  */
 
 #include "widescreen2d.h"
+#include "battleuimenu.h"
 #include "../data/roomData.h"
 #include <cmath>
+#include <iostream>
 
 // Global variables
 bool g_widescreen2DEnabled = true;
 float g_widescreenRatio = 0.75f;
+volatile bool g_boundaryOverridesEnabled = false;
+
+// Boundary override state
+static volatile int16_t g_targetLeftBoundary = 0;
+static volatile int16_t g_targetRightBoundary = 0;
+static volatile bool g_stopOverrideThread = false;
+static HANDLE g_overrideThread = NULL;
+static CRITICAL_SECTION g_threadCS;
+static bool g_csInitialized = false;
+
+// Background loop to constantly write boundary values
+DWORD WINAPI BoundaryOverrideThread(LPVOID param) {
+    HMODULE hModule = GetModuleHandleA("CHRONOCROSS.exe");
+    if (!hModule) return 0;
+
+    uintptr_t baseAddr = (uintptr_t)hModule;
+    int16_t* leftPtr = (int16_t*)(baseAddr + 0x719270);
+    int16_t* rightPtr = (int16_t*)(baseAddr + 0x719272);
+
+    while (!g_stopOverrideThread) {
+        if (g_boundaryOverridesEnabled && !IsInBattle()) {
+            // Force write the target values
+            // These are in the data segment, but let's be safe
+            *leftPtr = g_targetLeftBoundary;
+            *rightPtr = g_targetRightBoundary;
+        }
+        // Sleep for a tiny amount (1ms) to keep it responsive without high CPU usage
+        Sleep(1);
+    }
+    return 0;
+}
+
+// C++ wrapper to update targets from ASM
+extern "C" void __cdecl UpdateBoundaryOverride(int left, int right) {
+    g_targetLeftBoundary = (int16_t)left;
+    g_targetRightBoundary = (int16_t)right;
+
+    // Start the thread once if it's not running
+    if (g_csInitialized) {
+        EnterCriticalSection(&g_threadCS);
+        if (g_overrideThread == NULL && !g_stopOverrideThread) {
+            g_overrideThread = CreateThread(NULL, 0, BoundaryOverrideThread, NULL, 0, NULL);
+        }
+        LeaveCriticalSection(&g_threadCS);
+    }
+}
 
 // Hook-related globals
 static LPVOID g_hookAddress = nullptr;
@@ -222,14 +270,19 @@ __declspec(naked) void HookCave() {
     right_boundary_ok:
         
         // Get base address of CHRONOCROSS.exe
-        push eax
-        push edx
+        // CRITICAL: Save ecx (right boundary) and ebx (left boundary) as they may be clobbered
+        push ecx
+        push ebx
         push 0
         call GetModuleHandleA
+        pop ebx                       // Restore left boundary
+        pop ecx                       // Restore right boundary
+        
         test eax, eax
         jz skip_boundaries
         
         // Calculate address for left boundary (CHRONOCROSS.exe+719270)
+        // Use edi temporarily (it was saved at the start of the hook)
         mov edi, eax                  // edi = base address
         add edi, 719270h              // edi = base + 0x719270
         
@@ -242,10 +295,35 @@ __declspec(naked) void HookCave() {
         // Write right boundary (2-byte signed)
         mov word ptr [edi], cx
         
-skip_boundaries:
+        // === Boundary Override Call ===
+        // We always call this to update the C++ target values.
+        
+        // Save registers we'll use for the call
+        push eax
+        push ecx
+        push edx
+        
+        // Align stack to 16 bytes for C++ call
+        // Use edi to save ESP (it's safe here since we're done with the address)
+        mov edi, esp
+        and esp, 0FFFFFFF0h
+        sub esp, 8               // 8 bytes padding + 8 bytes parameters = 16
+        
+        // Call UpdateBoundaryOverride(left, right)
+        // ebx = left boundary, ecx = right boundary
+        push ecx                 // Param 2: right boundary
+        push ebx                 // Param 1: left boundary
+        call UpdateBoundaryOverride
+        
+        // Restore stack
+        mov esp, edi
+        
+        // Restore registers
         pop edx
+        pop ecx
         pop eax
         
+skip_boundaries:
         // Clean up stack
         add esp, 12                   // Remove old room width, old room X, and new room X
         jmp skip_transform
@@ -277,6 +355,12 @@ skip_transform:
 }
 
 bool InitWidescreen2DHook() {
+    // Initialize threaded write guard
+    if (!g_csInitialized) {
+        InitializeCriticalSection(&g_threadCS);
+        g_csInitialized = true;
+    }
+
     // Get the base address of CHRONOCROSS.exe
     HMODULE hModule = GetModuleHandleA("CHRONOCROSS.exe");
     if (!hModule) {
@@ -331,5 +415,12 @@ void SetWidescreen2DEnabled(bool enabled) {
     g_widescreen2DEnabled = enabled;
 #ifdef _DEBUG
     std::cout << "[Widescreen2D] " << (enabled ? "Enabled" : "Disabled") << std::endl;
+#endif
+}
+
+void SetBoundaryOverridesEnabled(bool enabled) {
+    g_boundaryOverridesEnabled = enabled;
+#ifdef _DEBUG
+    std::cout << "[Widescreen2D] Boundary overrides: " << (enabled ? "Enabled" : "Disabled") << std::endl;
 #endif
 }

@@ -107,6 +107,11 @@ DWORD WINAPI MainThread(LPVOID param) {
 		
 		// Always start dynamic monitoring to handle resolution changes
 		StartDynamicWidescreenMonitoring(base);
+
+		// Apply boundary overrides if enabled in settings
+		if (settings.GetBool("boundary_overrides", true)) {
+			SetBoundaryOverridesEnabled(true);
+		}
 	} else {
 		std::cout << "Widescreen patches disabled in settings" << std::endl;
 	}

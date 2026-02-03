@@ -234,9 +234,10 @@ bool Settings::SaveDefault(const std::string& filename) {
     file << "# NOTE: Texture resizing is automatically disabled when dumping is enabled" << std::endl;
     file << "# 0 = disabled, 1 = enabled" << std::endl;
     file << "texture_dump_enabled=0" << std::endl << std::endl;
-    file << "# Internal flag - set to 1 after first-run upscale setup is complete" << std::endl;
-    file << "# Delete this line or set to 0 to re-trigger the setup prompt" << std::endl;
     file << "upscale_setup_completed=0" << std::endl;
+    file << "# Force camera boundaries in rooms that might otherwise override them" << std::endl;
+    file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
+    file << "boundary_overrides=1" << std::endl;
 
     file.close();
     return true;
@@ -254,6 +255,7 @@ std::vector<std::string> Settings::GetRequiredKeys() {
         "upscale_enabled",
         "upscale_scale",
         "texture_dump_enabled",
-        "upscale_setup_completed"
+        "upscale_setup_completed",
+        "boundary_overrides"
     };
 }

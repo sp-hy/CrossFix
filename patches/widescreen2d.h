@@ -11,3 +11,6 @@ void SetWidescreen2DRatio(float ratio);
 
 // Enable or disable 2D widescreen transformation
 void SetWidescreen2DEnabled(bool enabled);
+
+// Enable or disable boundary overrides (high-frequency write loop)
+void SetBoundaryOverridesEnabled(bool enabled);
