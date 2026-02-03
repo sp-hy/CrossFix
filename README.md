@@ -16,7 +16,6 @@ Supports the latest Steam release v1.0.1.0
 ## Todo:
 - PXGP
 - Minor remaining UI bugs
-- Fix camera borders so it doesn't go out into black space
 - Modding Framework to use mods folder instead of dat/zips
 
 ## Installation

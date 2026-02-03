@@ -16,6 +16,17 @@ static float g_lastCursorXScaled = 0.0f;
 
 // Memory addresses
 static uintptr_t g_cursorWidthAddr = 0;
+static uintptr_t g_mainMenuOpenAddr = 0;
+
+// Check if the main menu is currently open
+bool IsMainMenuOpen() {
+	if (g_mainMenuOpenAddr == 0) return false;
+	try {
+		return (*(uint8_t*)g_mainMenuOpenAddr == 1);
+	} catch (...) {
+		return false;
+	}
+}
 
 // Hook memory
 static void* g_hookMem = nullptr;
@@ -83,6 +94,7 @@ extern "C" __declspec(naked) void __stdcall ScaleDialogValues(float* dialogWidth
 
 bool ApplyDialogPatch(uintptr_t base) {
 	g_cursorWidthAddr = base + 0x415F8;
+	g_mainMenuOpenAddr = base + 0x18B2C5D;
 	bool success = true;
 
 	// ============================================================
@@ -277,7 +289,9 @@ bool ApplyDialogPatch(uintptr_t base) {
 void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 	const float BASE_ASPECT = 4.0f / 3.0f;
 
-	if (aspectRatio < 1.4f) {
+	bool isMenuOpen = IsMainMenuOpen();
+
+	if (aspectRatio < 1.4f || isMenuOpen) {
 		// Reset to 4:3 defaults
 		if (g_xScale != 1.0f || g_letterSpacing != 0.45f || 
 			g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
