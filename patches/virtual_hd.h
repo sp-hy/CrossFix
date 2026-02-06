@@ -4,24 +4,6 @@
 #include <vector>
 #include <cstdint>
 
-enum class SegmentSource { RealFile, ModFile, Memory };
-
-struct Segment {
-    uint64_t virtualOffset;
-    uint64_t size;
-    SegmentSource source;
-
-    // For RealFile: offset into real hd.dat
-    uint64_t realOffset;
-
-    // For ModFile: path to mod file on disk
-    std::string modFilePath;
-    uint64_t modFileOffset;
-
-    // For Memory: pointer to synthesized data (local headers, central dir, eocd)
-    const uint8_t* memData;
-};
-
 struct ZipEntry {
     std::string filename;
     uint32_t compressedSize;
@@ -29,7 +11,7 @@ struct ZipEntry {
     uint16_t compressionMethod;
     uint32_t crc32;
     uint32_t localHeaderOffset;  // offset in real hd.dat
-    uint16_t extraFieldLength;
+    uint16_t extraFieldLength;   // CD extra field length
     uint16_t fileCommentLength;
     uint16_t internalAttrs;
     uint32_t externalAttrs;
@@ -40,10 +22,28 @@ struct ZipEntry {
     uint16_t generalPurposeFlag;
     uint16_t diskNumberStart;
 
-    // Computed during layout
+    // LFH fields (may differ from CD)
+    uint16_t lfhNameLength;
+    uint16_t lfhExtraLength;
+
+    // Offset in the real file where the file DATA starts
+    uint32_t dataOffset;
+
+    // Offset and size of this entry within the raw CD buffer
+    uint32_t cdEntryOffset;
+    uint32_t cdEntrySize;
+
+    // Total size of this entry in the real file (LFH + name + extra + data)
+    uint32_t realEntryTotalSize;
+
+    // Virtual layout (computed by ComputeLayout)
+    uint64_t virtualLocalHeaderOffset;
+    uint64_t virtualEntryTotalSize;
+
+    // Mod state
     bool isModded;
     std::string modFilePath;
-    uint32_t moddedFileSize;   // size of the mod file on disk
+    uint32_t moddedFileSize;
     uint32_t moddedCrc32;
 };
 
@@ -52,30 +52,29 @@ public:
     VirtualHd();
     ~VirtualHd();
 
-    // Build the virtual layout from the real hd.dat handle and mods directory
+    // Parse hd.dat and scan for mods. Call once with the real file handle.
     bool Build(HANDLE realHdDat, const std::string& modsDir);
 
-    // Get total virtual file size
-    uint64_t GetVirtualSize() const;
+    // Create the virtual ZIP in a VirtualAlloc'd buffer, reading unmodded data
+    // from realMappedBase (the real hd.dat mapped into memory).
+    // Caller must eventually VirtualFree the returned pointer.
+    uint8_t* CreateVirtualView(const uint8_t* realMappedBase);
 
-    // Read bytes from the virtual layout into buffer
-    // realHandle is used when reading from real hd.dat segments
-    bool ReadVirtual(HANDLE realHandle, uint64_t offset, void* buffer, uint32_t bytesToRead, uint32_t* bytesRead);
-
-    // Check if the layout has been built
+    uint64_t GetVirtualSize() const { return m_virtualSize; }
     bool IsBuilt() const { return m_built; }
 
 private:
     bool ParseRealZip(HANDLE realHdDat);
     void ScanMods(const std::string& modsDir);
-    void BuildLayout(HANDLE realHdDat);
+    void ComputeLayout();
     uint32_t ComputeCrc32(const std::string& filePath);
-    bool ReadRealFile(HANDLE realHandle, uint64_t offset, void* buffer, uint32_t size, uint32_t* bytesRead);
 
     std::vector<ZipEntry> m_entries;
-    std::vector<Segment> m_segments;
-    std::vector<std::vector<uint8_t>> m_memBuffers; // owns memory for Memory segments
+    std::vector<uint8_t> m_rawCd;  // raw CD bytes from real file
+    uint32_t m_cdOffset;
+    uint32_t m_cdSize;
+    uint32_t m_eocdOffset;
     uint64_t m_virtualSize;
+    uint64_t m_virtualCdOffset;
     bool m_built;
-    std::string m_modsDir;
 };
