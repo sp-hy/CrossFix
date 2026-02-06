@@ -237,7 +237,11 @@ bool Settings::SaveDefault(const std::string& filename) {
     file << "upscale_setup_completed=0" << std::endl;
     file << "# Force camera boundaries in rooms that might otherwise override them" << std::endl;
     file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
-    file << "boundary_overrides=1" << std::endl;
+    file << "boundary_overrides=1" << std::endl << std::endl;
+    file << "# Enable or disable the mod loader" << std::endl;
+    file << "# Loads replacement assets from the mods/ folder by hooking hd.dat file I/O" << std::endl;
+    file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
+    file << "mod_loader_enabled=1" << std::endl;
 
     file.close();
     return true;
@@ -256,6 +260,7 @@ std::vector<std::string> Settings::GetRequiredKeys() {
         "upscale_scale",
         "texture_dump_enabled",
         "upscale_setup_completed",
-        "boundary_overrides"
+        "boundary_overrides",
+        "mod_loader_enabled"
     };
 }

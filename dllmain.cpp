@@ -11,6 +11,7 @@
 #include "patches/dialog.h"
 #include "patches/battleuimenu.h"
 #include "patches/misc.h"
+#include "patches/modloader.h"
 #include "utils/settings.h"
 #include "utils/version.h"
 
@@ -52,6 +53,22 @@ DWORD WINAPI MainThread(LPVOID param) {
 	std::cout << "https://github.com/sp-hy/CrossFix || https://www.nexusmods.com/chronocrosstheradicaldreamersedition/mods/77" << std::endl;
 	std::cout << std::endl;
 
+	// Load settings early so mod loader can check its toggle
+	std::string settingsPath = "settings.ini";
+	std::string exePathStr(exePath);
+	size_t lastBackslash = exePathStr.find_last_of("\\/");
+	if (lastBackslash != std::string::npos) {
+		settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
+	}
+
+	Settings settings;
+	settings.Load(settingsPath);
+
+	// Initialize mod loader before version check — hooks must be active before game opens hd.dat
+	if (settings.GetBool("mod_loader_enabled", true)) {
+		InitModLoader(exePathStr);
+	}
+
 	// Check executable version
 	const char* expectedVersion = "1.0.1.0";
 	if (!CheckExecutableVersion(exePath, expectedVersion)) {
@@ -71,16 +88,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 	std::cout << "DLL loaded successfully! Base address of the injected executable is: 0x" << std::hex << base << std::dec << std::endl;
 #endif
 	std::cout << std::endl;
-
-	std::string settingsPath = "settings.ini";
-	std::string exePathStr(exePath);
-	size_t lastBackslash = exePathStr.find_last_of("\\/");
-	if (lastBackslash != std::string::npos) {
-		settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-	}
-
-	Settings settings;
-	settings.Load(settingsPath);
 
 
 	InitD3D11Proxy();
