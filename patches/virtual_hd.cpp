@@ -83,6 +83,12 @@ bool VirtualHd::Build(HANDLE realHdDat, const std::string& modsDir) {
     return true;
 }
 
+bool VirtualHd::HasMods() const {
+    for (const auto& ze : m_entries)
+        if (ze.isModded) return true;
+    return false;
+}
+
 void VirtualHd::ComputeLayout() {
     uint64_t offset = 0;
 
@@ -120,14 +126,39 @@ void VirtualHd::ComputeLayout() {
     m_virtualSize = offset;
 }
 
+// Maximum virtual size we support: 4GB - 1 (ZIP format uses 32-bit local header offset in CD; 32-bit process can't map larger anyway)
+static constexpr uint64_t MAX_VIRTUAL_SIZE = 0xFFFFFFFFULL;
+
 uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
     if (!m_built) return nullptr;
 
-    // Allocate the virtual file buffer
-    uint8_t* buf = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)m_virtualSize,
-                                           MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (m_virtualSize > MAX_VIRTUAL_SIZE) {
+        std::cout << "[ModLoader] Virtual archive size " << m_virtualSize << " exceeds 4GB limit (ZIP 32-bit offsets / 32-bit process limit). Mods disabled for this archive." << std::endl;
+        return nullptr;
+    }
+
+    uint8_t* buf = nullptr;
+    // Try VirtualAlloc first (fast path for small/medium sizes)
+    if (m_virtualSize <= SIZE_T(-1)) {
+        buf = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)m_virtualSize,
+                                     MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    }
+    // Fallback: page-file-backed mapping for large sizes (avoids contiguous reserve failure)
     if (!buf) {
-        std::cout << "[ModLoader] VirtualAlloc failed for " << m_virtualSize << " bytes" << std::endl;
+        std::cout << "[ModLoader] VirtualAlloc failed for " << m_virtualSize << " bytes, trying file mapping..." << std::endl;
+        HANDLE hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+            (DWORD)(m_virtualSize >> 32), (DWORD)(m_virtualSize & 0xFFFFFFFF), NULL);
+        if (hMap) {
+            buf = (uint8_t*)MapViewOfFile(hMap, FILE_MAP_WRITE, 0, 0, 0);
+            CloseHandle(hMap);  // view remains valid
+            if (!buf)
+                std::cout << "[ModLoader] MapViewOfFile failed: " << GetLastError() << std::endl;
+        } else {
+            std::cout << "[ModLoader] CreateFileMapping failed: " << GetLastError() << std::endl;
+        }
+    }
+    if (!buf) {
+        std::cout << "[ModLoader] Could not allocate virtual view for " << m_virtualSize << " bytes" << std::endl;
         return nullptr;
     }
 

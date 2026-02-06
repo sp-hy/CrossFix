@@ -62,6 +62,8 @@ public:
 
     uint64_t GetVirtualSize() const { return m_virtualSize; }
     bool IsBuilt() const { return m_built; }
+    // True if any entry was overridden by a mod (so we need to serve the virtual view)
+    bool HasMods() const;
 
 private:
     bool ParseRealZip(HANDLE realHdDat);
