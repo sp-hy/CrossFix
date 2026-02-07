@@ -5,7 +5,6 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <mutex>
 #include <algorithm>
 #include <filesystem>
@@ -16,10 +15,6 @@
 // Function pointer types
 // ============================================================================
 typedef HANDLE(WINAPI* pfnCreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
-typedef HANDLE(WINAPI* pfnCreateFileMappingW)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR);
-typedef HANDLE(WINAPI* pfnCreateFileMappingA)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCSTR);
-typedef LPVOID(WINAPI* pfnMapViewOfFile)(HANDLE, DWORD, DWORD, DWORD, SIZE_T);
-typedef BOOL(WINAPI* pfnUnmapViewOfFile)(LPCVOID);
 typedef BOOL(WINAPI* pfnCloseHandle)(HANDLE);
 typedef BOOL(WINAPI* pfnReadFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
 typedef BOOL(WINAPI* pfnSetFilePointerEx)(HANDLE, LARGE_INTEGER, PLARGE_INTEGER, DWORD);
@@ -27,16 +22,12 @@ typedef DWORD(WINAPI* pfnSetFilePointer)(HANDLE, LONG, PLONG, DWORD);
 typedef BOOL(WINAPI* pfnGetFileSizeEx)(HANDLE, PLARGE_INTEGER);
 
 // Originals
-static pfnCreateFileW        oCreateFileW        = nullptr;
-static pfnCreateFileMappingW oCreateFileMappingW = nullptr;
-static pfnCreateFileMappingA oCreateFileMappingA = nullptr;
-static pfnMapViewOfFile      oMapViewOfFile      = nullptr;
-static pfnUnmapViewOfFile    oUnmapViewOfFile    = nullptr;
-static pfnCloseHandle        oCloseHandle        = nullptr;
-static pfnReadFile           oReadFile           = nullptr;
-static pfnSetFilePointerEx   oSetFilePointerEx   = nullptr;
-static pfnSetFilePointer     oSetFilePointer     = nullptr;
-static pfnGetFileSizeEx      oGetFileSizeEx      = nullptr;
+static pfnCreateFileW      oCreateFileW      = nullptr;
+static pfnCloseHandle      oCloseHandle      = nullptr;
+static pfnReadFile         oReadFile         = nullptr;
+static pfnSetFilePointerEx oSetFilePointerEx = nullptr;
+static pfnSetFilePointer   oSetFilePointer   = nullptr;
+static pfnGetFileSizeEx    oGetFileSizeEx    = nullptr;
 
 // ============================================================================
 // Global state
@@ -49,19 +40,13 @@ static std::mutex g_mutex;
 struct DatState {
     VirtualHd virtualHd;
     bool built = false;
-    uint8_t* cachedView = nullptr;
     uint64_t viewSize = 0;
-    int mapViewRefCount = 0;
+    bool useReadFileSynthesis = false;  // serve via ReadFile only (no virtual buffer)
 };
 static std::unordered_map<std::string, std::unique_ptr<DatState>> g_datStates;
 
-// Which .dat key does each file handle / mapping / view belong to
+// Which .dat key does each file handle belong to
 static std::unordered_map<HANDLE, std::string> g_handleToDatKey;
-static std::unordered_map<HANDLE, std::string> g_mappingToDatKey;
-static std::unordered_map<LPCVOID, std::string> g_viewToDatKey;
-
-// Track VirtualAlloc'd buffers we returned from MapViewOfFile (for Unmap detection)
-static std::unordered_set<LPCVOID> g_virtualViews;
 
 // Per-handle file position for ReadFile path
 static std::unordered_map<HANDLE, uint64_t> g_datPosition;
@@ -136,40 +121,17 @@ static HANDLE WINAPI HookedCreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess
         if (!state->built) {
             if (state->virtualHd.Build(h, modsSubdir)) {
                 state->built = true;
-                // Only build virtual view and intercept when this archive has mods
                 if (state->virtualHd.HasMods()) {
-                    LARGE_INTEGER fileSize;
-                    if (oGetFileSizeEx(h, &fileSize) && fileSize.QuadPart > 0) {
-                        HANDLE hMap = oCreateFileMappingW(h, NULL, PAGE_READONLY, 0, 0, NULL);
-                        if (hMap) {
-                            LPVOID realView = oMapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-                            if (realView) {
-                                uint8_t* virtualBuf = state->virtualHd.CreateVirtualView((const uint8_t*)realView);
-                                oUnmapViewOfFile(realView);
-                                if (virtualBuf) {
-                                    state->viewSize = state->virtualHd.GetVirtualSize();
-                                    DWORD oldProtect;
-                                    VirtualProtect(virtualBuf, (SIZE_T)state->viewSize, PAGE_READONLY, &oldProtect);
-                                    std::lock_guard<std::mutex> lock(g_mutex);
-                                    state->cachedView = virtualBuf;
-                                    g_virtualViews.insert(virtualBuf);
-                                    g_viewToDatKey[virtualBuf] = datKey;
-                                    std::cout << "[ModLoader] Built virtual view for " << datKey << ".dat (ReadFile path), size: " << state->viewSize << std::endl;
-                                } else {
-                                    std::cout << "[ModLoader] Could not build virtual view for " << datKey << ".dat (mods will not load)" << std::endl;
-                                }
-                            }
-                            oCloseHandle(hMap);
-                        }
-                    }
+                    state->viewSize = state->virtualHd.GetVirtualSize();
+                    state->useReadFileSynthesis = true;
+                    std::cout << "[ModLoader] Using ReadFile synthesis for " << datKey << ".dat (" << state->viewSize << " bytes)" << std::endl;
                 }
             } else {
                 std::cout << "[ModLoader] Failed to build virtual layout for " << datKey << ".dat" << std::endl;
             }
         }
 
-        // Only intercept this handle if we have a virtual view (i.e. archive has mods and view was built)
-        if (state->cachedView) {
+        if (state->useReadFileSynthesis) {
             std::lock_guard<std::mutex> lock(g_mutex);
             g_handleToDatKey[h] = datKey;
             g_datPosition[h] = 0;
@@ -180,165 +142,7 @@ static HANDLE WINAPI HookedCreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess
 }
 
 // ============================================================================
-// CreateFileMappingW — tag .dat mapping handles
-// ============================================================================
-static HANDLE WINAPI HookedCreateFileMappingW(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes,
-    DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCWSTR lpName)
-{
-    std::string datKey;
-    bool built = false;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto it = g_handleToDatKey.find(hFile);
-        if (it != g_handleToDatKey.end()) {
-            datKey = it->second;
-            auto st = g_datStates.find(datKey);
-            built = (st != g_datStates.end() && st->second && st->second->built);
-        }
-    }
-
-    HANDLE hMapping = oCreateFileMappingW(hFile, lpAttributes, flProtect,
-        dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
-
-    if (hMapping && !datKey.empty() && built) {
-        std::cout << "[ModLoader] CreateFileMappingW on " << datKey << ".dat" << std::endl;
-        std::lock_guard<std::mutex> lock(g_mutex);
-        g_mappingToDatKey[hMapping] = datKey;
-    }
-
-    return hMapping;
-}
-
-// ============================================================================
-// CreateFileMappingA — same, in case the game uses the A variant
-// ============================================================================
-static HANDLE WINAPI HookedCreateFileMappingA(HANDLE hFile, LPSECURITY_ATTRIBUTES lpAttributes,
-    DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName)
-{
-    std::string datKey;
-    bool built = false;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto it = g_handleToDatKey.find(hFile);
-        if (it != g_handleToDatKey.end()) {
-            datKey = it->second;
-            auto st = g_datStates.find(datKey);
-            built = (st != g_datStates.end() && st->second && st->second->built);
-        }
-    }
-
-    HANDLE hMapping = oCreateFileMappingA(hFile, lpAttributes, flProtect,
-        dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
-
-    if (hMapping && !datKey.empty() && built) {
-        std::cout << "[ModLoader] CreateFileMappingA on " << datKey << ".dat" << std::endl;
-        std::lock_guard<std::mutex> lock(g_mutex);
-        g_mappingToDatKey[hMapping] = datKey;
-    }
-
-    return hMapping;
-}
-
-// ============================================================================
-// MapViewOfFile — for .dat mappings, return the full virtual ZIP buffer
-// ============================================================================
-static LPVOID WINAPI HookedMapViewOfFile(HANDLE hFileMappingObject, DWORD dwDesiredAccess,
-    DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap)
-{
-    std::string datKey;
-    DatState* state = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto it = g_mappingToDatKey.find(hFileMappingObject);
-        if (it != g_mappingToDatKey.end()) {
-            datKey = it->second;
-            auto st = g_datStates.find(datKey);
-            if (st != g_datStates.end() && st->second && st->second->built)
-                state = st->second.get();
-        }
-    }
-
-    if (!state) {
-        return oMapViewOfFile(hFileMappingObject, dwDesiredAccess,
-            dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap);
-    }
-
-    std::cout << "[ModLoader] MapViewOfFile on " << datKey << ".dat" << std::endl;
-
-    // Return cached view if we already built one
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (state->cachedView) {
-            state->mapViewRefCount++;
-            g_virtualViews.insert(state->cachedView);
-            g_viewToDatKey[state->cachedView] = datKey;
-            std::cout << "[ModLoader] Returning cached virtual view for " << datKey << " (refcount: " << state->mapViewRefCount << ")" << std::endl;
-            return state->cachedView;
-        }
-    }
-
-    std::cout << "[ModLoader] Building virtual view for " << datKey << "..." << std::endl;
-
-    LPVOID realView = oMapViewOfFile(hFileMappingObject, FILE_MAP_READ, 0, 0, 0);
-    if (!realView) {
-        std::cout << "[ModLoader] Failed to map real " << datKey << ".dat for reading, error: " << GetLastError() << std::endl;
-        return nullptr;
-    }
-
-    uint8_t* virtualBuf = state->virtualHd.CreateVirtualView((const uint8_t*)realView);
-    oUnmapViewOfFile(realView);
-
-    if (!virtualBuf) {
-        std::cout << "[ModLoader] Failed to create virtual view for " << datKey << std::endl;
-        return nullptr;
-    }
-
-    DWORD oldProtect;
-    VirtualProtect(virtualBuf, (SIZE_T)state->virtualHd.GetVirtualSize(), PAGE_READONLY, &oldProtect);
-
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        state->cachedView = virtualBuf;
-        state->viewSize = state->virtualHd.GetVirtualSize();
-        state->mapViewRefCount = 1;
-        g_virtualViews.insert(virtualBuf);
-        g_viewToDatKey[virtualBuf] = datKey;
-    }
-
-    std::cout << "[ModLoader] Returning virtual view for " << datKey << " at " << (void*)virtualBuf << ", size: " << state->viewSize << std::endl;
-    return virtualBuf;
-}
-
-// ============================================================================
-// UnmapViewOfFile — track refcount per .dat; do not free (ReadFile may still use it)
-// ============================================================================
-static BOOL WINAPI HookedUnmapViewOfFile(LPCVOID lpBaseAddress) {
-    bool isOurs = false;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto viewIt = g_viewToDatKey.find(lpBaseAddress);
-        if (viewIt != g_viewToDatKey.end()) {
-            isOurs = true;
-            std::string datKey = viewIt->second;
-            g_virtualViews.erase(lpBaseAddress);
-            g_viewToDatKey.erase(viewIt);
-            auto st = g_datStates.find(datKey);
-            if (st != g_datStates.end() && st->second) {
-                st->second->mapViewRefCount--;
-                if (st->second->mapViewRefCount < 0) st->second->mapViewRefCount = 0;
-                std::cout << "[ModLoader] UnmapViewOfFile on virtual view for " << datKey << " (refcount: " << st->second->mapViewRefCount << ")" << std::endl;
-            }
-        }
-    }
-
-    if (isOurs)
-        return TRUE;
-
-    return oUnmapViewOfFile(lpBaseAddress);
-}
-
-// ============================================================================
-// ReadFile — for .dat handles, serve from virtual view
+// ReadFile — for .dat handles, serve from ReadFile synthesis
 // ============================================================================
 static BOOL WINAPI HookedReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
     LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped)
@@ -348,35 +152,36 @@ static BOOL WINAPI HookedReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOf
     }
 
     std::string datKey;
+    DatState* state = nullptr;
     uint64_t* pPos = nullptr;
-    uint8_t* cachedView = nullptr;
-    uint64_t viewSize = 0;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         auto keyIt = g_handleToDatKey.find(hFile);
         if (keyIt != g_handleToDatKey.end()) {
             datKey = keyIt->second;
             auto st = g_datStates.find(datKey);
-            if (st != g_datStates.end() && st->second && st->second->cachedView) {
+            if (st != g_datStates.end() && st->second && st->second->useReadFileSynthesis) {
+                state = st->second.get();
                 auto posIt = g_datPosition.find(hFile);
-                if (posIt != g_datPosition.end()) {
+                if (posIt != g_datPosition.end())
                     pPos = &posIt->second;
-                    cachedView = st->second->cachedView;
-                    viewSize = st->second->viewSize;
-                }
             }
         }
     }
 
-    if (!pPos || !cachedView) {
+    if (!pPos || !state) {
         return oReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped);
     }
 
     uint64_t pos = *pPos;
+    uint64_t viewSize = state->viewSize;
     uint64_t remaining = (viewSize > pos) ? (viewSize - pos) : 0;
     DWORD toRead = (DWORD)(std::min)((uint64_t)nNumberOfBytesToRead, remaining);
+
     if (toRead > 0) {
-        memcpy(lpBuffer, cachedView + pos, toRead);
+        size_t got = state->virtualHd.ReadAtVirtualOffset(hFile, pos, lpBuffer, toRead,
+            oReadFile, oSetFilePointerEx);
+        toRead = (DWORD)got;
         *pPos = pos + toRead;
     }
     if (lpNumberOfBytesRead)
@@ -392,18 +197,21 @@ static BOOL WINAPI HookedSetFilePointerEx(HANDLE hFile, LARGE_INTEGER liDistance
 {
     std::string datKey;
     uint64_t viewSize = 0;
+    bool intercept = false;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         auto keyIt = g_handleToDatKey.find(hFile);
         if (keyIt != g_handleToDatKey.end()) {
             datKey = keyIt->second;
             auto st = g_datStates.find(datKey);
-            if (st != g_datStates.end() && st->second && st->second->cachedView)
+            if (st != g_datStates.end() && st->second && st->second->useReadFileSynthesis) {
                 viewSize = st->second->viewSize;
+                intercept = true;
+            }
         }
     }
 
-    if (datKey.empty() || viewSize == 0) {
+    if (!intercept) {
         return oSetFilePointerEx(hFile, liDistanceToMove, lpNewFilePointerHigh, dwMoveMethod);
     }
 
@@ -451,7 +259,7 @@ static BOOL WINAPI HookedGetFileSizeEx(HANDLE hFile, PLARGE_INTEGER lpFileSize) 
         auto keyIt = g_handleToDatKey.find(hFile);
         if (keyIt != g_handleToDatKey.end()) {
             auto st = g_datStates.find(keyIt->second);
-            if (st != g_datStates.end() && st->second && st->second->cachedView)
+            if (st != g_datStates.end() && st->second && st->second->useReadFileSynthesis)
                 viewSize = st->second->viewSize;
         }
     }
@@ -469,7 +277,6 @@ static BOOL WINAPI HookedCloseHandle(HANDLE hObject) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_handleToDatKey.erase(hObject);
-        g_mappingToDatKey.erase(hObject);
         g_datPosition.erase(hObject);
     }
     return oCloseHandle(hObject);
@@ -514,16 +321,12 @@ bool InitModLoader(const std::string& exePath) {
     }
 
     bool allOk = true;
-    allOk &= CreateHookHelper(L"kernel32", "CreateFileW",        (LPVOID)HookedCreateFileW,        (LPVOID*)&oCreateFileW);
-    allOk &= CreateHookHelper(L"kernel32", "CreateFileMappingW", (LPVOID)HookedCreateFileMappingW, (LPVOID*)&oCreateFileMappingW);
-    allOk &= CreateHookHelper(L"kernel32", "CreateFileMappingA", (LPVOID)HookedCreateFileMappingA, (LPVOID*)&oCreateFileMappingA);
-    allOk &= CreateHookHelper(L"kernel32", "MapViewOfFile",      (LPVOID)HookedMapViewOfFile,      (LPVOID*)&oMapViewOfFile);
-    allOk &= CreateHookHelper(L"kernel32", "UnmapViewOfFile",    (LPVOID)HookedUnmapViewOfFile,    (LPVOID*)&oUnmapViewOfFile);
-    allOk &= CreateHookHelper(L"kernel32", "ReadFile",           (LPVOID)HookedReadFile,            (LPVOID*)&oReadFile);
-    allOk &= CreateHookHelper(L"kernel32", "SetFilePointerEx",   (LPVOID)HookedSetFilePointerEx,   (LPVOID*)&oSetFilePointerEx);
-    allOk &= CreateHookHelper(L"kernel32", "SetFilePointer",     (LPVOID)HookedSetFilePointer,     (LPVOID*)&oSetFilePointer);
-    allOk &= CreateHookHelper(L"kernel32", "GetFileSizeEx",      (LPVOID)HookedGetFileSizeEx,     (LPVOID*)&oGetFileSizeEx);
-    allOk &= CreateHookHelper(L"kernel32", "CloseHandle",        (LPVOID)HookedCloseHandle,        (LPVOID*)&oCloseHandle);
+    allOk &= CreateHookHelper(L"kernel32", "CreateFileW",      (LPVOID)HookedCreateFileW,      (LPVOID*)&oCreateFileW);
+    allOk &= CreateHookHelper(L"kernel32", "ReadFile",         (LPVOID)HookedReadFile,         (LPVOID*)&oReadFile);
+    allOk &= CreateHookHelper(L"kernel32", "SetFilePointerEx", (LPVOID)HookedSetFilePointerEx, (LPVOID*)&oSetFilePointerEx);
+    allOk &= CreateHookHelper(L"kernel32", "SetFilePointer",   (LPVOID)HookedSetFilePointer,   (LPVOID*)&oSetFilePointer);
+    allOk &= CreateHookHelper(L"kernel32", "GetFileSizeEx",    (LPVOID)HookedGetFileSizeEx,   (LPVOID*)&oGetFileSizeEx);
+    allOk &= CreateHookHelper(L"kernel32", "CloseHandle",      (LPVOID)HookedCloseHandle,     (LPVOID*)&oCloseHandle);
 
     if (!allOk) {
         std::cout << "[ModLoader] Some hooks failed to install" << std::endl;

@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -144,138 +146,145 @@ void VirtualHd::ComputeLayout() {
     m_virtualSize = offset;
 }
 
-// Maximum virtual size we support: 4GB - 1 (ZIP format uses 32-bit local header offset in CD; 32-bit process can't map larger anyway)
-static constexpr uint64_t MAX_VIRTUAL_SIZE = 0xFFFFFFFFULL;
-
-uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
-    if (!m_built) return nullptr;
-
-    if (m_virtualSize > MAX_VIRTUAL_SIZE) {
-        std::cout << "[ModLoader] Virtual archive size " << m_virtualSize << " exceeds 4GB limit (ZIP 32-bit offsets / 32-bit process limit). Mods disabled for this archive." << std::endl;
-        return nullptr;
-    }
-
-    uint8_t* buf = nullptr;
-    // Try VirtualAlloc first (fast path for small/medium sizes)
-    if (m_virtualSize <= SIZE_T(-1)) {
-        buf = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)m_virtualSize,
-                                     MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    }
-    // Fallback: page-file-backed mapping for large sizes (avoids contiguous reserve failure)
-    if (!buf) {
-        std::cout << "[ModLoader] VirtualAlloc failed for " << m_virtualSize << " bytes, trying file mapping..." << std::endl;
-        HANDLE hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
-            (DWORD)(m_virtualSize >> 32), (DWORD)(m_virtualSize & 0xFFFFFFFF), NULL);
-        if (hMap) {
-            buf = (uint8_t*)MapViewOfFile(hMap, FILE_MAP_WRITE, 0, 0, 0);
-            CloseHandle(hMap);  // view remains valid
-            if (!buf)
-                std::cout << "[ModLoader] MapViewOfFile failed: " << GetLastError() << std::endl;
-        } else {
-            std::cout << "[ModLoader] CreateFileMapping failed: " << GetLastError() << std::endl;
-        }
-    }
-    if (!buf) {
-        std::cout << "[ModLoader] Could not allocate virtual view for " << m_virtualSize << " bytes" << std::endl;
-        return nullptr;
-    }
-
-    // Phase 1: Write local file headers + data
-    for (auto& ze : m_entries) {
-        uint8_t* dst = buf + ze.virtualLocalHeaderOffset;
-
-        if (ze.isModded) {
-            uint16_t nameLen = (uint16_t)ze.filename.size();
-            uint8_t* dataStart = dst + LFH_FIXED_SIZE + nameLen;
-
-            // Single read + CRC in memory (avoids double-read: ScanMods no longer calls ComputeCrc32)
-            std::ifstream modFile(ze.modFilePath, std::ios::binary);
-            if (modFile.is_open()) {
-                modFile.read((char*)dataStart, ze.moddedFileSize);
-                ze.moddedCrc32 = UpdateCrc32(0, dataStart, ze.moddedFileSize);
-                modFile.close();
-            } else {
-                std::cout << "[ModLoader] ERROR: Cannot read mod file: " << ze.modFilePath << std::endl;
-            }
-
-            // Synthesize new LFH (stored/uncompressed)
-            WriteU32(dst + 0,  LFH_SIGNATURE);
-            WriteU16(dst + 4,  20);                    // version needed
-            WriteU16(dst + 6,  0);                     // flags
-            WriteU16(dst + 8,  0);                     // compression: stored
-            WriteU16(dst + 10, ze.lastModTime);
-            WriteU16(dst + 12, ze.lastModDate);
-            WriteU32(dst + 14, ze.moddedCrc32);
-            WriteU32(dst + 18, ze.moddedFileSize);     // compressed = uncompressed
-            WriteU32(dst + 22, ze.moddedFileSize);
-            WriteU16(dst + 26, nameLen);
-            WriteU16(dst + 28, 0);                     // no extra field
-            memcpy(dst + LFH_FIXED_SIZE, ze.filename.data(), nameLen);
-        } else {
-            // Copy entire entry (LFH + name + extra + data) from real mapped file
-            if (ze.localHeaderOffset > SIZE_MAX || ze.realEntryTotalSize > SIZE_MAX) {
-                std::cout << "[ModLoader] Entry offset/size exceeds addressable range, skipping" << std::endl;
-            } else {
-                memcpy(dst, realMappedBase + (size_t)ze.localHeaderOffset, (size_t)ze.realEntryTotalSize);
-            }
-        }
-    }
-
-    // Phase 2: Write Central Directory
-    uint8_t* cdStart = buf + m_virtualCdOffset;
+void VirtualHd::BuildSyntheticCDAndEOCD() {
+    if (!m_syntheticCD.empty()) return;
+    uint64_t cdSize = 0;
+    for (const auto& ze : m_entries)
+        cdSize += ze.isModded ? (CD_FIXED_SIZE + ze.filename.size()) : ze.cdEntrySize;
+    cdSize += EOCD_FIXED_SIZE;
+    m_syntheticCD.resize((size_t)cdSize);
+    uint8_t* cdStart = m_syntheticCD.data();
     uint64_t cdPos = 0;
-
     for (const auto& ze : m_entries) {
         uint8_t* p = cdStart + cdPos;
-
         if (ze.isModded) {
             uint16_t nameLen = (uint16_t)ze.filename.size();
-            uint32_t cdEntrySize = CD_FIXED_SIZE + nameLen;
-
             WriteU32(p + 0,  CD_SIGNATURE);
             WriteU16(p + 4,  ze.versionMadeBy);
-            WriteU16(p + 6,  20);                       // version needed
-            WriteU16(p + 8,  0);                         // flags
-            WriteU16(p + 10, 0);                         // compression: stored
+            WriteU16(p + 6,  20);
+            WriteU16(p + 8,  0);
+            WriteU16(p + 10, 0);
             WriteU16(p + 12, ze.lastModTime);
             WriteU16(p + 14, ze.lastModDate);
             WriteU32(p + 16, ze.moddedCrc32);
             WriteU32(p + 20, ze.moddedFileSize);
             WriteU32(p + 24, ze.moddedFileSize);
             WriteU16(p + 28, nameLen);
-            WriteU16(p + 30, 0);                         // extra field length
-            WriteU16(p + 32, 0);                         // comment length
-            WriteU16(p + 34, 0);                         // disk number
+            WriteU16(p + 30, 0);
+            WriteU16(p + 32, 0);
+            WriteU16(p + 34, 0);
             WriteU16(p + 36, ze.internalAttrs);
             WriteU32(p + 38, ze.externalAttrs);
             WriteU32(p + 42, (uint32_t)ze.virtualLocalHeaderOffset);
             memcpy(p + CD_FIXED_SIZE, ze.filename.data(), nameLen);
-
-            cdPos += cdEntrySize;
+            cdPos += CD_FIXED_SIZE + nameLen;
         } else {
-            // Copy original raw CD entry, patch the local header offset
             memcpy(p, m_rawCd.data() + ze.cdEntryOffset, ze.cdEntrySize);
             WriteU32(p + 42, (uint32_t)ze.virtualLocalHeaderOffset);
             cdPos += ze.cdEntrySize;
         }
     }
-
     uint32_t totalCdSize = (uint32_t)cdPos;
-
-    // Phase 3: Write EOCD
     uint8_t* eocd = cdStart + cdPos;
-    uint16_t numEntries = (uint16_t)m_entries.size();
     WriteU32(eocd + 0,  EOCD_SIGNATURE);
-    WriteU16(eocd + 4,  0);                              // disk number
-    WriteU16(eocd + 6,  0);                              // disk with CD
-    WriteU16(eocd + 8,  numEntries);
-    WriteU16(eocd + 10, numEntries);
+    WriteU16(eocd + 4,  0);
+    WriteU16(eocd + 6,  0);
+    WriteU16(eocd + 8,  (uint16_t)m_entries.size());
+    WriteU16(eocd + 10, (uint16_t)m_entries.size());
     WriteU32(eocd + 12, totalCdSize);
     WriteU32(eocd + 16, (uint32_t)m_virtualCdOffset);
-    WriteU16(eocd + 20, 0);                              // comment length
+    WriteU16(eocd + 20, 0);
+}
 
-    std::cout << "[ModLoader] Virtual view built: " << m_virtualSize << " bytes" << std::endl;
-    return buf;
+size_t VirtualHd::ReadAtVirtualOffset(HANDLE realFile, uint64_t virtualOffset, void* buffer, size_t size,
+    BOOL(WINAPI* readFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED),
+    BOOL(WINAPI* setFilePointerEx)(HANDLE, LARGE_INTEGER, PLARGE_INTEGER, DWORD))
+{
+    if (virtualOffset >= m_virtualSize || size == 0) return 0;
+    size = (size_t)(std::min)((uint64_t)size, m_virtualSize - virtualOffset);
+
+    if (virtualOffset >= m_virtualCdOffset) {
+        BuildSyntheticCDAndEOCD();
+        uint64_t offInCD = virtualOffset - m_virtualCdOffset;
+        size_t toCopy = (size_t)(std::min)((uint64_t)size, (uint64_t)m_syntheticCD.size() - offInCD);
+        memcpy(buffer, m_syntheticCD.data() + offInCD, toCopy);
+        return toCopy;
+    }
+
+    uint8_t* dst = (uint8_t*)buffer;
+    size_t totalRead = 0;
+    uint64_t pos = virtualOffset;
+
+    while (totalRead < size && pos < m_virtualCdOffset) {
+        size_t entryIdx = 0;
+        for (; entryIdx < m_entries.size(); entryIdx++) {
+            const auto& ze = m_entries[entryIdx];
+            if (pos < ze.virtualLocalHeaderOffset + ze.virtualEntryTotalSize) break;
+        }
+        if (entryIdx >= m_entries.size()) break;
+
+        const auto& ze = m_entries[entryIdx];
+        uint64_t offsetInEntry = pos - ze.virtualLocalHeaderOffset;
+        uint64_t bytesInEntry = ze.virtualEntryTotalSize - offsetInEntry;
+        size_t toRead = (size_t)(std::min)((uint64_t)(size - totalRead), bytesInEntry);
+
+        if (ze.isModded) {
+            uint32_t headerSize = LFH_FIXED_SIZE + (uint32_t)ze.filename.size();
+            if (offsetInEntry < headerSize) {
+                uint8_t lfhBuf[1024];
+                uint32_t copyFromHeader = (uint32_t)(std::min)((uint64_t)toRead, (uint64_t)(headerSize - offsetInEntry));
+                if (ze.moddedCrc32 == 0) {
+                    std::ifstream mf(ze.modFilePath, std::ios::binary);
+                    if (mf.is_open()) {
+                        char tmp[65536];
+                        uint32_t crc = 0;
+                        while (mf.read(tmp, sizeof(tmp)) || mf.gcount() > 0)
+                            crc = UpdateCrc32(crc, tmp, (size_t)mf.gcount());
+                        m_entries[entryIdx].moddedCrc32 = crc;
+                    }
+                }
+                WriteU32(lfhBuf + 0,  LFH_SIGNATURE);
+                WriteU16(lfhBuf + 4,  20);
+                WriteU16(lfhBuf + 6,  0);
+                WriteU16(lfhBuf + 8,  0);
+                WriteU16(lfhBuf + 10, ze.lastModTime);
+                WriteU16(lfhBuf + 12, ze.lastModDate);
+                WriteU32(lfhBuf + 14, ze.moddedCrc32);
+                WriteU32(lfhBuf + 18, ze.moddedFileSize);
+                WriteU32(lfhBuf + 22, ze.moddedFileSize);
+                WriteU16(lfhBuf + 26, (uint16_t)ze.filename.size());
+                WriteU16(lfhBuf + 28, 0);
+                memcpy(lfhBuf + LFH_FIXED_SIZE, ze.filename.data(), ze.filename.size());
+                memcpy(dst, lfhBuf + offsetInEntry, copyFromHeader);
+                totalRead += copyFromHeader;
+                dst += copyFromHeader;
+                pos += copyFromHeader;
+                toRead -= copyFromHeader;
+            }
+            if (toRead > 0) {
+                uint64_t dataOffset = (offsetInEntry >= headerSize) ? (offsetInEntry - headerSize) : 0;
+                std::ifstream mf(ze.modFilePath, std::ios::binary);
+                if (mf.is_open()) {
+                    mf.seekg((std::streamoff)dataOffset);
+                    mf.read((char*)dst, toRead);
+                    size_t got = (size_t)mf.gcount();
+                    totalRead += got;
+                    dst += got;
+                    pos += got;
+                }
+            }
+        } else {
+            uint64_t realOffset = ze.localHeaderOffset + offsetInEntry;
+            LARGE_INTEGER li;
+            li.QuadPart = (LONGLONG)realOffset;
+            if (setFilePointerEx(realFile, li, nullptr, FILE_BEGIN)) {
+                DWORD got = 0;
+                if (readFile(realFile, dst, (DWORD)toRead, &got, nullptr))
+                    totalRead += got, dst += got, pos += got;
+            }
+        }
+    }
+    return totalRead;
 }
 
 // Parse Zip64 extended info extra field (ID 0x0001) for 64-bit sizes/offset
@@ -441,7 +450,7 @@ void VirtualHd::ScanMods(const std::string& modsDir) {
                 ze.isModded = true;
                 ze.modFilePath = dirEntry.path().string();
                 ze.moddedFileSize = (uint32_t)dirEntry.file_size();
-                // CRC32 is computed lazily during CreateVirtualView to avoid double-reading
+                // CRC32 is computed lazily in ReadAtVirtualOffset when serving modded data
                 ze.moddedCrc32 = 0;
                 modCount++;
                 std::cout << "[ModLoader] Mod: " << relStr << " ("

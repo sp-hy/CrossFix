@@ -55,20 +55,25 @@ public:
     // Parse hd.dat and scan for mods. Call once with the real file handle.
     bool Build(HANDLE realHdDat, const std::string& modsDir);
 
-    // Create the virtual ZIP in a VirtualAlloc'd buffer, reading unmodded data
-    // from realMappedBase (the real hd.dat mapped into memory).
-    // Caller must eventually VirtualFree the returned pointer.
-    uint8_t* CreateVirtualView(const uint8_t* realMappedBase);
-
     uint64_t GetVirtualSize() const { return m_virtualSize; }
+    uint64_t GetVirtualCdOffset() const { return m_virtualCdOffset; }
     bool IsBuilt() const { return m_built; }
+    size_t GetEntryCount() const { return m_entries.size(); }
+    const ZipEntry& GetEntry(size_t i) const { return m_entries[i]; }
     // True if any entry was overridden by a mod (so we need to serve the virtual view)
     bool HasMods() const;
+
+    // Read from virtual layout at given offset - no buffer needed. Uses realFile for unmodded,
+    // reads mod files for modded. Returns bytes read. Use when view allocation fails.
+    size_t ReadAtVirtualOffset(HANDLE realFile, uint64_t virtualOffset, void* buffer, size_t size,
+        BOOL(WINAPI* readFile)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED),
+        BOOL(WINAPI* setFilePointerEx)(HANDLE, LARGE_INTEGER, PLARGE_INTEGER, DWORD));
 
 private:
     bool ParseRealZip(HANDLE realHdDat);
     void ScanMods(const std::string& modsDir);
     void ComputeLayout();
+    void BuildSyntheticCDAndEOCD();  // fills m_syntheticCD for ReadAtVirtualOffset
 
     std::vector<ZipEntry> m_entries;
     std::vector<uint8_t> m_rawCd;  // raw CD bytes from real file
@@ -78,4 +83,5 @@ private:
     uint64_t m_virtualSize;
     uint64_t m_virtualCdOffset;
     bool m_built;
+    std::vector<uint8_t> m_syntheticCD;  // precomputed CD+EOCD for ReadAtVirtualOffset
 };
