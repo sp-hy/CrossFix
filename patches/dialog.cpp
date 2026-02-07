@@ -30,10 +30,6 @@ bool IsMainMenuOpen() {
   }
 }
 
-// Hook memory
-static void *g_hookMem = nullptr;
-static void *g_cursorPosHookMem = nullptr;
-
 // Helper function called by the hook to scale values only if they've changed
 // We track the ORIGINAL unscaled values and only scale if the value has changed
 // from last time
@@ -96,6 +92,44 @@ ScaleDialogValues(float *dialogWidth, float *cursorX) {
   }
 }
 
+// Return address for dialog X scale hook (set at patch time)
+static uintptr_t g_dialogXScaleReturnAddr = 0;
+
+// Patch 4: offsets and return address (set at patch time)
+static uint32_t g_cursorPosDialogWidthOffset = 0;
+static uint32_t g_cursorPosCursorXOffset = 0;
+static uintptr_t g_cursorPosReturnAddr = 0;
+
+// Naked hook: original mulps + scale X component, then jmp back
+extern "C" __declspec(naked) void DialogTextXScaleHook() {
+  __asm {
+		mulps xmm1, xmm4
+		movaps xmm0, xmm1
+		mulss xmm0, dword ptr [g_xScale]
+		movss xmm1, xmm0
+		jmp dword ptr [g_dialogXScaleReturnAddr]
+  }
+}
+
+// Naked hook: scale dialog width + cursor X via ScaleDialogValues, then
+// original movss, jmp back
+extern "C" __declspec(naked) void CursorPosDialogWidthHook() {
+  __asm {
+		pushad
+		mov ecx, dword ptr [g_cursorPosDialogWidthOffset]
+		add ecx, eax
+		mov edx, dword ptr [g_cursorPosCursorXOffset]
+		add edx, eax
+		push edx
+		push ecx
+		call ScaleDialogValues
+		popad
+		mov ecx, dword ptr [g_cursorPosCursorXOffset]
+		movss xmm0, dword ptr [eax+ecx]
+		jmp dword ptr [g_cursorPosReturnAddr]
+  }
+}
+
 bool ApplyDialogPatch(uintptr_t base) {
   g_cursorWidthAddr = base + 0x415F8;
   g_mainMenuOpenAddr = base + 0x18B2C5D;
@@ -107,59 +141,12 @@ bool ApplyDialogPatch(uintptr_t base) {
   // We hook to scale the X component of dialog text positions
   // ============================================================
   uintptr_t hookAddr = base + 0x195CD6;
-  uintptr_t returnAddr = hookAddr + 6; // After jmp(5) + nop(1)
+  g_dialogXScaleReturnAddr = hookAddr + 6; // After jmp(5) + nop(1)
 
-  // Allocate executable memory for our hook
-  g_hookMem =
-      VirtualAlloc(NULL, 128, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-  if (!g_hookMem) {
-    std::cout << "Failed to allocate hook memory" << std::endl;
-    return false;
-  }
-
-  // Build the hook code
-  uint8_t hookCode[64];
-  int offset = 0;
-
-  // mulps xmm1,xmm4 - original instruction (0F 59 CC)
-  hookCode[offset++] = 0x0F;
-  hookCode[offset++] = 0x59;
-  hookCode[offset++] = 0xCC;
-
-  // movaps xmm0,xmm1 - copy positions (0F 28 C1)
-  hookCode[offset++] = 0x0F;
-  hookCode[offset++] = 0x28;
-  hookCode[offset++] = 0xC1;
-
-  // mulss xmm0,[g_xScale] - scale X component (F3 0F 59 05 [abs32])
-  hookCode[offset++] = 0xF3;
-  hookCode[offset++] = 0x0F;
-  hookCode[offset++] = 0x59;
-  hookCode[offset++] = 0x05;
-  uint32_t xScaleAddr = (uint32_t)(uintptr_t)&g_xScale;
-  memcpy(&hookCode[offset], &xScaleAddr, 4);
-  offset += 4;
-
-  // movss xmm1,xmm0 - put compressed X back into xmm1 (F3 0F 10 C8)
-  hookCode[offset++] = 0xF3;
-  hookCode[offset++] = 0x0F;
-  hookCode[offset++] = 0x10;
-  hookCode[offset++] = 0xC8;
-
-  // jmp return (E9 [rel32])
-  hookCode[offset++] = 0xE9;
-  uintptr_t jmpFromAddr = (uintptr_t)g_hookMem + offset;
-  int32_t jmpRel = (int32_t)(returnAddr - (jmpFromAddr + 4));
-  memcpy(&hookCode[offset], &jmpRel, 4);
-  offset += 4;
-
-  // Copy hook code to allocated memory
-  memcpy(g_hookMem, hookCode, offset);
-
-  // Patch the original location to jump to our hook
   uint8_t jmpPatch[6];
   jmpPatch[0] = 0xE9; // JMP rel32
-  int32_t hookRel = (int32_t)((uintptr_t)g_hookMem - (hookAddr + 5));
+  int32_t hookRel =
+      (int32_t)((uintptr_t)&DialogTextXScaleHook - (hookAddr + 5));
   memcpy(&jmpPatch[1], &hookRel, 4);
   jmpPatch[5] = 0x90; // NOP
 
@@ -202,87 +189,14 @@ bool ApplyDialogPatch(uintptr_t base) {
   // ratio
   // ============================================================
   uintptr_t cursorPosHookAddr = base + 0x433BA;
-  uintptr_t cursorPosReturnAddr =
-      cursorPosHookAddr + 8; // After the 8-byte instruction
+  g_cursorPosDialogWidthOffset = (uint32_t)(base + 0x1089E10);
+  g_cursorPosCursorXOffset = (uint32_t)(base + 0x1089E14);
+  g_cursorPosReturnAddr = cursorPosHookAddr + 8; // After the 8-byte instruction
 
-  // Allocate executable memory for cursor position hook
-  g_cursorPosHookMem =
-      VirtualAlloc(NULL, 256, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-  if (!g_cursorPosHookMem) {
-    std::cout << "Failed to allocate cursor position hook memory" << std::endl;
-    return false;
-  }
-
-  // Build the hook code
-  uint8_t cursorHookCode[128];
-  int cursorOffset = 0;
-
-  uint32_t dialogWidthOffset = base + 0x1089E10;
-  uint32_t cursorXOffset = base + 0x1089E14;
-  uint32_t scaleFunc = (uint32_t)(uintptr_t)&ScaleDialogValues;
-
-  // Save all registers that we'll modify
-  // pushad - push all general purpose registers (60)
-  cursorHookCode[cursorOffset++] = 0x60;
-
-  // Calculate addresses: [eax+base+0x1089E10] and [eax+base+0x1089E14]
-  // We need to pass these addresses to our function
-
-  // lea edx,[eax+base+0x1089E14] - calculate address of cursorX (8D 90
-  // [offset])
-  cursorHookCode[cursorOffset++] = 0x8D;
-  cursorHookCode[cursorOffset++] = 0x90;
-  memcpy(&cursorHookCode[cursorOffset], &cursorXOffset, 4);
-  cursorOffset += 4;
-
-  // lea ecx,[eax+base+0x1089E10] - calculate address of dialogWidth (8D 88
-  // [offset])
-  cursorHookCode[cursorOffset++] = 0x8D;
-  cursorHookCode[cursorOffset++] = 0x88;
-  memcpy(&cursorHookCode[cursorOffset], &dialogWidthOffset, 4);
-  cursorOffset += 4;
-
-  // push edx - push cursorX address as 2nd parameter
-  cursorHookCode[cursorOffset++] = 0x52;
-
-  // push ecx - push dialogWidth address as 1st parameter
-  cursorHookCode[cursorOffset++] = 0x51;
-
-  // call ScaleDialogValues (E8 [rel32])
-  cursorHookCode[cursorOffset++] = 0xE8;
-  uintptr_t callFromAddr = (uintptr_t)g_cursorPosHookMem + cursorOffset;
-  int32_t callRel = (int32_t)(scaleFunc - (callFromAddr + 4));
-  memcpy(&cursorHookCode[cursorOffset], &callRel, 4);
-  cursorOffset += 4;
-
-  // Restore all registers
-  // popad - pop all general purpose registers (61)
-  cursorHookCode[cursorOffset++] = 0x61;
-
-  // Execute original instruction: movss xmm0,[eax+base+0x1089E14]
-  cursorHookCode[cursorOffset++] = 0xF3;
-  cursorHookCode[cursorOffset++] = 0x0F;
-  cursorHookCode[cursorOffset++] = 0x10;
-  cursorHookCode[cursorOffset++] = 0x80;
-  memcpy(&cursorHookCode[cursorOffset], &cursorXOffset, 4);
-  cursorOffset += 4;
-
-  // jmp return (E9 [rel32])
-  cursorHookCode[cursorOffset++] = 0xE9;
-  uintptr_t cursorJmpFromAddr = (uintptr_t)g_cursorPosHookMem + cursorOffset;
-  int32_t cursorJmpRel =
-      (int32_t)(cursorPosReturnAddr - (cursorJmpFromAddr + 4));
-  memcpy(&cursorHookCode[cursorOffset], &cursorJmpRel, 4);
-  cursorOffset += 4;
-
-  // Copy hook code to allocated memory
-  memcpy(g_cursorPosHookMem, cursorHookCode, cursorOffset);
-
-  // Patch the original location to jump to our hook
   uint8_t cursorJmpPatch[8];
   cursorJmpPatch[0] = 0xE9; // JMP rel32
   int32_t cursorHookRel =
-      (int32_t)((uintptr_t)g_cursorPosHookMem - (cursorPosHookAddr + 5));
+      (int32_t)((uintptr_t)&CursorPosDialogWidthHook - (cursorPosHookAddr + 5));
   memcpy(&cursorJmpPatch[1], &cursorHookRel, 4);
   cursorJmpPatch[5] = 0x90; // NOP
   cursorJmpPatch[6] = 0x90; // NOP
