@@ -18,6 +18,7 @@
 
 #include "widescreen2d.h"
 #include "../data/roomData.h"
+#include "../utils/memory.h"
 #include "battleuimenu.h"
 #include <cmath>
 
@@ -408,23 +409,11 @@ bool InitWidescreen2DHook() {
   const int actualHookSize = 6;
   memcpy(g_originalBytes, g_hookAddress, actualHookSize);
 
-  // Create the CALL instruction to our cave + NOP padding
-  BYTE callInstruction[6];
-  callInstruction[0] = 0xE8; // CALL opcode (relative)
-  DWORD relativeAddress =
-      (DWORD)((uintptr_t)HookCave - (uintptr_t)g_hookAddress - 5);
-  memcpy(&callInstruction[1], &relativeAddress, 4);
-  callInstruction[5] = 0x90; // NOP to pad to 6 bytes
-
-  // Write the CALL instruction
-  DWORD oldProtect;
-  if (!VirtualProtect(g_hookAddress, actualHookSize, PAGE_EXECUTE_READWRITE,
-                      &oldProtect)) {
+  // Install the CALL hook
+  if (!InstallCallHook((uintptr_t)g_hookAddress, (void *)HookCave,
+                        actualHookSize)) {
     return false;
   }
-
-  memcpy(g_hookAddress, callInstruction, actualHookSize);
-  VirtualProtect(g_hookAddress, actualHookSize, oldProtect, &oldProtect);
 
 #ifdef _DEBUG
   std::cout << "[Widescreen2D] ASM hook installed successfully" << std::endl;

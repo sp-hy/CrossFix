@@ -2,6 +2,7 @@
 
 #define NOMINMAX
 #include "upscale4k.h"
+#include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "../utils/viewport_utils.h"
 #include "texturedump.h"
@@ -36,15 +37,6 @@ volatile CreateTexture2D_t Original_CreateTexture2D = nullptr;
 volatile LONG g_viewportsHookReady = 0;
 volatile LONG g_copyHookReady = 0;
 volatile LONG g_createTextureHookReady = 0;
-
-CRITICAL_SECTION g_hookInstallCS;
-volatile LONG g_hookCSInitialized = 0;
-
-void InitHookCS() {
-  if (InterlockedCompareExchange(&g_hookCSInitialized, 1, 0) == 0) {
-    InitializeCriticalSection(&g_hookInstallCS);
-  }
-}
 
 inline bool IsColorFormat(DXGI_FORMAT format) {
   return format == DXGI_FORMAT_R8G8B8A8_UNORM ||
@@ -277,15 +269,7 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
     return;
 
   try {
-    char exePath[MAX_PATH];
-    std::string settingsPath = "settings.ini";
-    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
-      std::string exePathStr(exePath);
-      size_t lastBackslash = exePathStr.find_last_of("\\/");
-      if (lastBackslash != std::string::npos) {
-        settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-      }
-    }
+    std::string settingsPath = Settings::GetSettingsPath();
 
     Settings settings;
     settings.Load(settingsPath);
@@ -365,59 +349,21 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
 
     if (!contextVtable || !deviceVtable)
       return;
-    if (!contextVtable[44] || !contextVtable[46] || !deviceVtable[5])
-      return;
 
-    InitHookCS();
-    EnterCriticalSection(&g_hookInstallCS);
+    InstallVtableHook(contextVtable, 50, 44, (void *)Hooked_RSSetViewports,
+                      (volatile void **)&Original_RSSetViewports,
+                      &g_viewportsHookReady);
 
-    DWORD oldProtect;
+    InstallVtableHook(contextVtable, 50, 46,
+                      (void *)Hooked_CopySubresourceRegion,
+                      (volatile void **)&Original_CopySubresourceRegion,
+                      &g_copyHookReady);
 
-    if (VirtualProtect(contextVtable, sizeof(void *) * 50,
-                       PAGE_EXECUTE_READWRITE, &oldProtect)) {
-      if (contextVtable[44] != (void *)Hooked_RSSetViewports) {
-        Original_RSSetViewports = (RSSetViewports_t)contextVtable[44];
-        MemoryBarrier();
-        contextVtable[44] = (void *)Hooked_RSSetViewports;
-        FlushInstructionCache(GetCurrentProcess(), contextVtable,
-                              sizeof(void *) * 50);
-        MemoryBarrier();
-        InterlockedExchange(&g_viewportsHookReady, 1);
-      }
+    InstallVtableHook(deviceVtable, 10, 5, (void *)Hooked_CreateTexture2D,
+                      (volatile void **)&Original_CreateTexture2D,
+                      &g_createTextureHookReady);
 
-      if (contextVtable[46] != (void *)Hooked_CopySubresourceRegion) {
-        Original_CopySubresourceRegion =
-            (CopySubresourceRegion_t)contextVtable[46];
-        MemoryBarrier();
-        contextVtable[46] = (void *)Hooked_CopySubresourceRegion;
-        FlushInstructionCache(GetCurrentProcess(), contextVtable,
-                              sizeof(void *) * 50);
-        MemoryBarrier();
-        InterlockedExchange(&g_copyHookReady, 1);
-      }
-
-      VirtualProtect(contextVtable, sizeof(void *) * 50, oldProtect,
-                     &oldProtect);
-    }
-
-    if (VirtualProtect(deviceVtable, sizeof(void *) * 10,
-                       PAGE_EXECUTE_READWRITE, &oldProtect)) {
-      if (deviceVtable[5] != (void *)Hooked_CreateTexture2D) {
-        Original_CreateTexture2D = (CreateTexture2D_t)deviceVtable[5];
-        MemoryBarrier();
-        deviceVtable[5] = (void *)Hooked_CreateTexture2D;
-        FlushInstructionCache(GetCurrentProcess(), deviceVtable,
-                              sizeof(void *) * 10);
-        MemoryBarrier();
-        InterlockedExchange(&g_createTextureHookReady, 1);
-      }
-      VirtualProtect(deviceVtable, sizeof(void *) * 10, oldProtect,
-                     &oldProtect);
-    }
-
-    LeaveCriticalSection(&g_hookInstallCS);
     Sleep(1);
   } catch (...) {
-    LeaveCriticalSection(&g_hookInstallCS);
   }
 }

@@ -601,18 +601,8 @@ bool IsTextureDumpEnabled() {
 
   g_settingsLoaded = true;
 
-  char exePath[MAX_PATH];
-  std::string settingsPath = "settings.ini";
-  if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
-    std::string exePathStr(exePath);
-    size_t lastBackslash = exePathStr.find_last_of("\\/");
-    if (lastBackslash != std::string::npos) {
-      settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-    }
-  }
-
   Settings settings;
-  settings.Load(settingsPath);
+  settings.Load(Settings::GetSettingsPath());
   g_textureDumpEnabled = settings.GetBool("texture_dump_enabled", false);
 
   if (g_textureDumpEnabled) {

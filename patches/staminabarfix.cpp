@@ -2,6 +2,7 @@
 
 #define NOMINMAX
 #include "staminabarfix.h"
+#include "../utils/memory.h"
 #include "../utils/viewport_utils.h"
 #include "widescreen.h"
 #include <Windows.h>
@@ -14,15 +15,6 @@ typedef void(STDMETHODCALLTYPE *RSSetViewports_t)(ID3D11DeviceContext *, UINT,
 
 volatile RSSetViewports_t Original_RSSetViewports_StaminaBarFix = nullptr;
 volatile LONG g_staminaBarFixHookReady = 0;
-
-CRITICAL_SECTION g_staminaBarFixCS;
-volatile LONG g_staminaBarFixCSInitialized = 0;
-
-void InitStaminaBarFixCS() {
-  if (InterlockedCompareExchange(&g_staminaBarFixCSInitialized, 1, 0) == 0) {
-    InitializeCriticalSection(&g_staminaBarFixCS);
-  }
-}
 } // namespace
 
 void STDMETHODCALLTYPE Hooked_RSSetViewports_StaminaBarFix(
@@ -66,39 +58,13 @@ void ApplyStaminaBarFixPatch(ID3D11Device *pDevice,
   if (InterlockedCompareExchange(&applied, 1, 0) != 0)
     return;
 
-  try {
-    void **contextVtable = *(void ***)pContext;
+  void **contextVtable = *(void ***)pContext;
+  if (!contextVtable)
+    return;
 
-    if (!contextVtable)
-      return;
-    if (!contextVtable[44])
-      return;
-
-    InitStaminaBarFixCS();
-    EnterCriticalSection(&g_staminaBarFixCS);
-
-    DWORD oldProtect;
-
-    if (VirtualProtect(contextVtable, sizeof(void *) * 50,
-                       PAGE_EXECUTE_READWRITE, &oldProtect)) {
-      if (contextVtable[44] != (void *)Hooked_RSSetViewports_StaminaBarFix) {
-        Original_RSSetViewports_StaminaBarFix =
-            (RSSetViewports_t)contextVtable[44];
-        MemoryBarrier();
-        contextVtable[44] = (void *)Hooked_RSSetViewports_StaminaBarFix;
-        FlushInstructionCache(GetCurrentProcess(), contextVtable,
-                              sizeof(void *) * 50);
-        MemoryBarrier();
-        InterlockedExchange(&g_staminaBarFixHookReady, 1);
-      }
-
-      VirtualProtect(contextVtable, sizeof(void *) * 50, oldProtect,
-                     &oldProtect);
-    }
-
-    LeaveCriticalSection(&g_staminaBarFixCS);
-    Sleep(1);
-  } catch (...) {
-    LeaveCriticalSection(&g_staminaBarFixCS);
-  }
+  InstallVtableHook(contextVtable, 50, 44,
+                    (void *)Hooked_RSSetViewports_StaminaBarFix,
+                    (volatile void **)&Original_RSSetViewports_StaminaBarFix,
+                    &g_staminaBarFixHookReady);
+  Sleep(1);
 }

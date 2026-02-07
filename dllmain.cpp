@@ -59,12 +59,8 @@ DWORD WINAPI MainThread(LPVOID param) {
   std::cout << std::endl;
 
   // Load settings early so mod loader can check its toggle
-  std::string settingsPath = "settings.ini";
+  std::string settingsPath = Settings::GetSettingsPath();
   std::string exePathStr(exePath);
-  size_t lastBackslash = exePathStr.find_last_of("\\/");
-  if (lastBackslash != std::string::npos) {
-    settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-  }
 
   Settings settings;
   settings.Load(settingsPath);

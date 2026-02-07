@@ -1,4 +1,5 @@
 #include "settings.h"
+#include <Windows.h>
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -7,6 +8,18 @@
 #include <vector>
 
 Settings::Settings() : m_wasFirstRun(false) {}
+
+std::string Settings::GetSettingsPath() {
+  char exePath[MAX_PATH];
+  if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
+    std::string exePathStr(exePath);
+    size_t lastBackslash = exePathStr.find_last_of("\\/");
+    if (lastBackslash != std::string::npos) {
+      return exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
+    }
+  }
+  return "settings.ini";
+}
 
 bool Settings::FileExists(const std::string &filename) {
   struct stat buffer;

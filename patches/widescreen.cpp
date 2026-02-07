@@ -1,4 +1,5 @@
 #include "widescreen.h"
+#include "../utils/memory.h"
 #include "battleuimenu.h"
 #include "dialog.h"
 #include "widescreen2d.h"
@@ -55,8 +56,7 @@ float CalculateWidescreenRatio(float aspectRatio) {
   // Formula: (4/3) / aspectRatio
   // This gives us the compression ratio needed to fit 4:3 content into
   // widescreen
-  const float original43 = 4.0f / 3.0f;
-  return original43 / aspectRatio;
+  return BASE_ASPECT_RATIO / aspectRatio;
 }
 
 // Apply the widescreen patches with dynamic aspect ratio
@@ -78,46 +78,14 @@ bool ApplyWidescreenPatch(uintptr_t base, float aspectRatio) {
     g_originalBytesSaved = true;
   }
 
-  // Use the universal hook function
-  void *hookFunction = (void *)WidescreenHookUniversal;
-
-  // Calculate relative call address for addr1
-  int32_t relativeAddr1 = (int32_t)((uintptr_t)hookFunction - (addr1 + 5));
-  // Calculate relative call address for addr2
-  int32_t relativeAddr2 = (int32_t)((uintptr_t)hookFunction - (addr2 + 5));
-
-  // Prepare the patch bytes for addr1: call + 3 nops
-  unsigned char patch1[8] = {
-      0xE8, // call
-      (unsigned char)(relativeAddr1 & 0xFF),
-      (unsigned char)((relativeAddr1 >> 8) & 0xFF),
-      (unsigned char)((relativeAddr1 >> 16) & 0xFF),
-      (unsigned char)((relativeAddr1 >> 24) & 0xFF),
-      0x90,
-      0x90,
-      0x90 // nop nop nop
-  };
-
-  // Prepare the patch bytes for addr2: call + 3 nops
-  unsigned char patch2[8] = {
-      0xE8, // call
-      (unsigned char)(relativeAddr2 & 0xFF),
-      (unsigned char)((relativeAddr2 >> 8) & 0xFF),
-      (unsigned char)((relativeAddr2 >> 16) & 0xFF),
-      (unsigned char)((relativeAddr2 >> 24) & 0xFF),
-      0x90,
-      0x90,
-      0x90 // nop nop nop
-  };
-
-  // Apply the patches
-  if (!WriteMemory(addr1, patch1, 8)) {
+  // Apply the CALL hooks
+  if (!InstallCallHook(addr1, (void *)WidescreenHookUniversal, 8)) {
     std::cout << "Failed to patch address 1 (0x" << std::hex << addr1 << ")"
               << std::dec << std::endl;
     return false;
   }
 
-  if (!WriteMemory(addr2, patch2, 8)) {
+  if (!InstallCallHook(addr2, (void *)WidescreenHookUniversal, 8)) {
     std::cout << "Failed to patch address 2 (0x" << std::hex << addr2 << ")"
               << std::dec << std::endl;
     return false;
@@ -176,7 +144,7 @@ bool ApplyWidescreenPatchAuto(uintptr_t base, float *outAspectRatio) {
   }
 
   // If it's not widescreen (e.g. 4:3), don't apply
-  if (aspectRatio < 1.4f) {
+  if (aspectRatio < WIDESCREEN_THRESHOLD) {
     std::cout << "Aspect ratio is not widescreen. Widescreen patch not applied."
               << std::endl;
     return false;
@@ -259,7 +227,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
 
         // Calculate new aspect ratio
         float aspectRatio = (float)resX / (float)resY;
-        bool isWidescreen = aspectRatio >= 1.4f;
+        bool isWidescreen = aspectRatio >= WIDESCREEN_THRESHOLD;
 
         // Only apply patch if aspect ratio has actually changed
         bool aspectRatioChanged = (aspectRatio != lastAspectRatio);

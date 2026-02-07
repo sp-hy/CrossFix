@@ -1,4 +1,5 @@
 #include "textureresize.h"
+#include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "texturedump.h"
 #include "widescreen.h"
@@ -16,15 +17,6 @@ typedef HRESULT(STDMETHODCALLTYPE *CreateTexture2D_t)(
 volatile CreateTexture2D_t Original_CreateTexture2D_Resize = nullptr;
 volatile LONG g_resizeHooksApplied = 0;
 volatile LONG g_resizeHooksReady = 0;
-
-CRITICAL_SECTION g_resizeHookInstallCS;
-volatile LONG g_resizeCSInitialized = 0;
-
-void InitResizeCS() {
-  if (InterlockedCompareExchange(&g_resizeCSInitialized, 1, 0) == 0) {
-    InitializeCriticalSection(&g_resizeHookInstallCS);
-  }
-}
 
 // Static buffer pool
 CRITICAL_SECTION g_bufferPoolCS;
@@ -70,6 +62,57 @@ bool IsBlockCompressedFormat(DXGI_FORMAT format) {
     return true;
   default:
     return false;
+  }
+}
+
+// Bilinear interpolation of a single pixel between srcX0 and srcX1
+static inline void InterpolatePixel(const uint8_t *srcData, size_t srcBufferSize,
+                                    UINT srcPitch, UINT srcX0, UINT srcX1,
+                                    float fracX, UINT y, DXGI_FORMAT format,
+                                    UINT bytesPerPixel, uint8_t *dst) {
+  if (format == DXGI_FORMAT_B4G4R4A4_UNORM) {
+    UINT srcOffset0 = y * srcPitch + srcX0 * bytesPerPixel;
+    UINT srcOffset1 = y * srcPitch + srcX1 * bytesPerPixel;
+
+    if (srcOffset0 + 1 >= srcBufferSize || srcOffset1 + 1 >= srcBufferSize) {
+      dst[0] = 0;
+      dst[1] = 0;
+      return;
+    }
+
+    uint16_t pixel0 =
+        *reinterpret_cast<const uint16_t *>(srcData + srcOffset0);
+    uint16_t pixel1 =
+        *reinterpret_cast<const uint16_t *>(srcData + srcOffset1);
+
+    uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
+    uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
+    uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
+    uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
+
+    uint8_t b = static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
+    uint8_t g = static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
+    uint8_t r = static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
+    uint8_t a = static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
+
+    uint16_t result =
+        (b & 0xF) | ((g & 0xF) << 4) | ((r & 0xF) << 8) | ((a & 0xF) << 12);
+    *reinterpret_cast<uint16_t *>(dst) = result;
+  } else {
+    for (UINT c = 0; c < bytesPerPixel; ++c) {
+      UINT srcOffset0 = y * srcPitch + srcX0 * bytesPerPixel + c;
+      UINT srcOffset1 = y * srcPitch + srcX1 * bytesPerPixel + c;
+
+      if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
+        dst[c] = 0;
+        continue;
+      }
+
+      float val0 = srcData[srcOffset0];
+      float val1 = srcData[srcOffset1];
+      float result = val0 * (1.0f - fracX) + val1 * fracX;
+      dst[c] = static_cast<uint8_t>(result + 0.5f);
+    }
   }
 }
 
@@ -166,60 +209,10 @@ void CreateCenterPaddedData(const D3D11_TEXTURE2D_DESC *pDesc,
             if (dstOffset + bytesPerPixel > buffer.size())
               continue;
 
-            if (pDesc->Format == DXGI_FORMAT_B4G4R4A4_UNORM) {
-              UINT srcOffset0 =
-                  y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel;
-              UINT srcOffset1 =
-                  y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel;
-
-              if (srcOffset0 + 1 >= srcBufferSize ||
-                  srcOffset1 + 1 >= srcBufferSize) {
-                buffer[dstOffset] = 0;
-                buffer[dstOffset + 1] = 0;
-                continue;
-              }
-
-              uint16_t pixel0 =
-                  *reinterpret_cast<const uint16_t *>(srcData + srcOffset0);
-              uint16_t pixel1 =
-                  *reinterpret_cast<const uint16_t *>(srcData + srcOffset1);
-
-              uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
-              uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
-              uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
-              uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
-
-              uint8_t b =
-                  static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
-              uint8_t g =
-                  static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
-              uint8_t r =
-                  static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
-              uint8_t a =
-                  static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
-
-              uint16_t result = (b & 0xF) | ((g & 0xF) << 4) |
-                                ((r & 0xF) << 8) | ((a & 0xF) << 12);
-              *reinterpret_cast<uint16_t *>(buffer.data() + dstOffset) = result;
-            } else {
-              for (UINT b = 0; b < bytesPerPixel; ++b) {
-                UINT srcOffset0 =
-                    y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
-                UINT srcOffset1 =
-                    y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
-
-                if (srcOffset0 >= srcBufferSize ||
-                    srcOffset1 >= srcBufferSize) {
-                  buffer[dstOffset + b] = 0;
-                  continue;
-                }
-
-                float val0 = srcData[srcOffset0];
-                float val1 = srcData[srcOffset1];
-                float result = val0 * (1.0f - fracX) + val1 * fracX;
-                buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
-              }
-            }
+            InterpolatePixel(srcData, srcBufferSize,
+                             pInitialData->SysMemPitch, srcX0, srcX1, fracX, y,
+                             pDesc->Format, bytesPerPixel,
+                             buffer.data() + dstOffset);
           }
         }
       }
@@ -284,59 +277,9 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC *pDesc,
           if (dstOffset + bytesPerPixel > buffer.size())
             continue;
 
-          if (pDesc->Format == DXGI_FORMAT_B4G4R4A4_UNORM) {
-            UINT srcOffset0 =
-                y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel;
-            UINT srcOffset1 =
-                y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel;
-
-            if (srcOffset0 + 1 >= srcBufferSize ||
-                srcOffset1 + 1 >= srcBufferSize) {
-              buffer[dstOffset] = 0;
-              buffer[dstOffset + 1] = 0;
-              continue;
-            }
-
-            uint16_t pixel0 =
-                *reinterpret_cast<const uint16_t *>(srcData + srcOffset0);
-            uint16_t pixel1 =
-                *reinterpret_cast<const uint16_t *>(srcData + srcOffset1);
-
-            uint8_t b0 = pixel0 & 0xF, b1 = pixel1 & 0xF;
-            uint8_t g0 = (pixel0 >> 4) & 0xF, g1 = (pixel1 >> 4) & 0xF;
-            uint8_t r0 = (pixel0 >> 8) & 0xF, r1 = (pixel1 >> 8) & 0xF;
-            uint8_t a0 = (pixel0 >> 12) & 0xF, a1 = (pixel1 >> 12) & 0xF;
-
-            uint8_t b =
-                static_cast<uint8_t>(b0 * (1.0f - fracX) + b1 * fracX + 0.5f);
-            uint8_t g =
-                static_cast<uint8_t>(g0 * (1.0f - fracX) + g1 * fracX + 0.5f);
-            uint8_t r =
-                static_cast<uint8_t>(r0 * (1.0f - fracX) + r1 * fracX + 0.5f);
-            uint8_t a =
-                static_cast<uint8_t>(a0 * (1.0f - fracX) + a1 * fracX + 0.5f);
-
-            uint16_t result = (b & 0xF) | ((g & 0xF) << 4) | ((r & 0xF) << 8) |
-                              ((a & 0xF) << 12);
-            *reinterpret_cast<uint16_t *>(buffer.data() + dstOffset) = result;
-          } else {
-            for (UINT b = 0; b < bytesPerPixel; ++b) {
-              UINT srcOffset0 =
-                  y * pInitialData->SysMemPitch + srcX0 * bytesPerPixel + b;
-              UINT srcOffset1 =
-                  y * pInitialData->SysMemPitch + srcX1 * bytesPerPixel + b;
-
-              if (srcOffset0 >= srcBufferSize || srcOffset1 >= srcBufferSize) {
-                buffer[dstOffset + b] = 0;
-                continue;
-              }
-
-              float val0 = srcData[srcOffset0];
-              float val1 = srcData[srcOffset1];
-              float result = val0 * (1.0f - fracX) + val1 * fracX;
-              buffer[dstOffset + b] = static_cast<uint8_t>(result + 0.5f);
-            }
-          }
+          InterpolatePixel(srcData, srcBufferSize, pInitialData->SysMemPitch,
+                           srcX0, srcX1, fracX, y, pDesc->Format,
+                           bytesPerPixel, buffer.data() + dstOffset);
         }
       }
     }
@@ -427,56 +370,23 @@ void ApplyTextureResizeHooks(ID3D11Device *pDevice) {
   if (InterlockedCompareExchange(&g_resizeHooksApplied, 1, 0) != 0)
     return;
 
-  InitResizeCS();
-  EnterCriticalSection(&g_resizeHookInstallCS);
+  Settings settings;
+  settings.Load(Settings::GetSettingsPath());
 
-  try {
-    char exePath[MAX_PATH];
-    std::string settingsPath = "settings.ini";
-    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
-      std::string exePathStr(exePath);
-      size_t lastBackslash = exePathStr.find_last_of("\\/");
-      if (lastBackslash != std::string::npos) {
-        settingsPath = exePathStr.substr(0, lastBackslash + 1) + "settings.ini";
-      }
-    }
+  bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
+  bool textureDumpEnabled = settings.GetBool("texture_dump_enabled", false);
+  bool enabled = widescreenEnabled && !textureDumpEnabled;
 
-    Settings settings;
-    settings.Load(settingsPath);
+  if (!enabled)
+    return;
 
-    bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
-    bool textureDumpEnabled = settings.GetBool("texture_dump_enabled", false);
-    bool enabled = widescreenEnabled && !textureDumpEnabled;
+  void **deviceVtable = *(void ***)pDevice;
+  if (!deviceVtable)
+    return;
 
-    if (!enabled) {
-      LeaveCriticalSection(&g_resizeHookInstallCS);
-      return;
-    }
-
-    void **deviceVtable = *(void ***)pDevice;
-    if (!deviceVtable || !deviceVtable[5]) {
-      LeaveCriticalSection(&g_resizeHookInstallCS);
-      return;
-    }
-
-    DWORD oldProtect;
-    if (VirtualProtect(deviceVtable, sizeof(void *) * 10,
-                       PAGE_EXECUTE_READWRITE, &oldProtect)) {
-      if (deviceVtable[5] != (void *)Hooked_CreateTexture2D_Resize) {
-        Original_CreateTexture2D_Resize = (CreateTexture2D_t)deviceVtable[5];
-        MemoryBarrier();
-        deviceVtable[5] = (void *)Hooked_CreateTexture2D_Resize;
-        FlushInstructionCache(GetCurrentProcess(), deviceVtable,
-                              sizeof(void *) * 10);
-        MemoryBarrier();
-      }
-      VirtualProtect(deviceVtable, sizeof(void *) * 10, oldProtect,
-                     &oldProtect);
-      InterlockedExchange(&g_resizeHooksReady, 1);
-      Sleep(1);
-    }
-    LeaveCriticalSection(&g_resizeHookInstallCS);
-  } catch (...) {
-    LeaveCriticalSection(&g_resizeHookInstallCS);
-  }
+  InstallVtableHook(deviceVtable, 10, 5,
+                    (void *)Hooked_CreateTexture2D_Resize,
+                    (volatile void **)&Original_CreateTexture2D_Resize,
+                    &g_resizeHooksReady);
+  Sleep(1);
 }

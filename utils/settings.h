@@ -24,6 +24,9 @@ public:
   bool UpdateFile(const std::string &filename, const std::string &key,
                   const std::string &value);
 
+  // Returns absolute path to settings.ini next to the executable.
+  static std::string GetSettingsPath();
+
   // Check if settings file exists (for first-run detection)
   static bool FileExists(const std::string &filename);
 

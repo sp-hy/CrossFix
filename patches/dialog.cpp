@@ -1,7 +1,6 @@
 #include "dialog.h"
 #include "../utils/memory.h"
 #include <Windows.h>
-#include <cstring>
 #include <iostream>
 
 // Dynamic values for dialog scaling
@@ -21,13 +20,7 @@ static uintptr_t g_mainMenuOpenAddr = 0;
 
 // Check if the main menu is currently open
 bool IsMainMenuOpen() {
-  if (g_mainMenuOpenAddr == 0)
-    return false;
-  try {
-    return (*(uint8_t *)g_mainMenuOpenAddr == 1);
-  } catch (...) {
-    return false;
-  }
+  return ReadGameByte(g_mainMenuOpenAddr) == 1;
 }
 
 // Helper function called by the hook to scale values only if they've changed
@@ -143,14 +136,7 @@ bool ApplyDialogPatch(uintptr_t base) {
   uintptr_t hookAddr = base + 0x195CD6;
   g_dialogXScaleReturnAddr = hookAddr + 6; // After jmp(5) + nop(1)
 
-  uint8_t jmpPatch[6];
-  jmpPatch[0] = 0xE9; // JMP rel32
-  int32_t hookRel =
-      (int32_t)((uintptr_t)&DialogTextXScaleHook - (hookAddr + 5));
-  memcpy(&jmpPatch[1], &hookRel, 4);
-  jmpPatch[5] = 0x90; // NOP
-
-  if (!WriteMemory(hookAddr, jmpPatch, 6)) {
+  if (!InstallJmpHook(hookAddr, (void *)&DialogTextXScaleHook, 6)) {
     std::cout << "Failed to apply dialog X scale hook" << std::endl;
     success = false;
   }
@@ -160,10 +146,7 @@ bool ApplyDialogPatch(uintptr_t base) {
   // CHRONOCROSS.exe+44D11 - F3 0F59 15 E4B84D00 - mulss
   // xmm2,[CHRONOCROSS.exe+2CB8E4] Redirect to our g_letterSpacing variable
   // ============================================================
-  uintptr_t addr2 = base + 0x44D11 + 4;
-  uint32_t newAddress2 = (uint32_t)(uintptr_t)&g_letterSpacing;
-
-  if (!WriteMemory(addr2, &newAddress2, sizeof(uint32_t))) {
+  if (!RedirectOperand(base + 0x44D11 + 4, &g_letterSpacing)) {
     std::cout << "Failed to apply letter spacing redirection patch"
               << std::endl;
     success = false;
@@ -174,10 +157,7 @@ bool ApplyDialogPatch(uintptr_t base) {
   // CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1,
   // [CHRONOCROSS.exe+E2F448]
   // ============================================================
-  uintptr_t portraitAddr = base + 0x415B9 + 4;
-  uint32_t portraitVal = (uint32_t)(uintptr_t)&g_portraitWidth;
-
-  if (!WriteMemory(portraitAddr, &portraitVal, sizeof(uint32_t))) {
+  if (!RedirectOperand(base + 0x415B9 + 4, &g_portraitWidth)) {
     std::cout << "Failed to apply portrait width patch" << std::endl;
     success = false;
   }
@@ -193,16 +173,7 @@ bool ApplyDialogPatch(uintptr_t base) {
   g_cursorPosCursorXOffset = (uint32_t)(base + 0x1089E14);
   g_cursorPosReturnAddr = cursorPosHookAddr + 8; // After the 8-byte instruction
 
-  uint8_t cursorJmpPatch[8];
-  cursorJmpPatch[0] = 0xE9; // JMP rel32
-  int32_t cursorHookRel =
-      (int32_t)((uintptr_t)&CursorPosDialogWidthHook - (cursorPosHookAddr + 5));
-  memcpy(&cursorJmpPatch[1], &cursorHookRel, 4);
-  cursorJmpPatch[5] = 0x90; // NOP
-  cursorJmpPatch[6] = 0x90; // NOP
-  cursorJmpPatch[7] = 0x90; // NOP
-
-  if (!WriteMemory(cursorPosHookAddr, cursorJmpPatch, 8)) {
+  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosDialogWidthHook, 8)) {
     std::cout << "Failed to apply cursor position hook" << std::endl;
     success = false;
   }
@@ -215,11 +186,9 @@ bool ApplyDialogPatch(uintptr_t base) {
 }
 
 void UpdateDialogValues(float aspectRatio, bool isInBattle) {
-  const float BASE_ASPECT = 4.0f / 3.0f;
-
   bool isMenuOpen = IsMainMenuOpen();
 
-  if (aspectRatio < 1.4f || isMenuOpen) {
+  if (aspectRatio < WIDESCREEN_THRESHOLD || isMenuOpen) {
     // Reset to 4:3 defaults
     if (g_xScale != 1.0f || g_letterSpacing != 0.45f ||
         g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
@@ -239,7 +208,7 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 #endif
     }
   } else {
-    float wideRatio = BASE_ASPECT / aspectRatio;
+    float wideRatio = BASE_ASPECT_RATIO / aspectRatio;
 
     // X Scale: compress horizontally for widescreen (1.0 for 4:3, 0.75 for
     // 16:9)
