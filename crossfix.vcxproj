@@ -114,6 +114,7 @@
     <ClCompile Include="patches\battleuimenu.cpp" />
     <ClCompile Include="patches\misc.cpp" />
     <ClCompile Include="patches\modloader.cpp" />
+    <ClCompile Include="patches\sampleroverride.cpp" />
     <ClCompile Include="patches\virtual_hd.cpp" />
     <ClCompile Include="data\roomData.cpp" />
     <ClCompile Include="utils\memory.cpp" />
@@ -139,6 +140,7 @@
     <ClInclude Include="patches\battleuimenu.h" />
     <ClInclude Include="patches\misc.h" />
     <ClInclude Include="patches\modloader.h" />
+    <ClInclude Include="patches\sampleroverride.h" />
     <ClInclude Include="patches\virtual_hd.h" />
     <ClInclude Include="data\roomData.h" />
     <ClInclude Include="utils\memory.h" />

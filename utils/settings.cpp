@@ -283,7 +283,15 @@ bool Settings::SaveDefault(const std::string &filename) {
           "add them to mods/map/mapbin"
        << std::endl;
   file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
-  file << "mod_loader_enabled=0" << std::endl;
+  file << "mod_loader_enabled=0" << std::endl << std::endl;
+  file << "# Force POINT texture filtering (fixes lines around overlay "
+          "textures when upscaling)"
+       << std::endl;
+  file << "# Makes all textures use nearest-neighbor filtering (pixelated but "
+          "no bleed)"
+       << std::endl;
+  file << "# 0 = disabled (default), 1 = enabled" << std::endl;
+  file << "sampler_force_point=0" << std::endl;
 
   file.close();
   return true;
@@ -302,5 +310,6 @@ std::vector<std::string> Settings::GetRequiredKeys() {
           "texture_dump_enabled",
           "upscale_setup_completed",
           "boundary_overrides",
-          "mod_loader_enabled"};
+          "mod_loader_enabled",
+          "sampler_force_point"};
 }
