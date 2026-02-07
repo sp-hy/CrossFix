@@ -13,8 +13,47 @@ static uint32_t g_baseRes = 1280;  // Base 1280 for 4:3
 // 1.0 for 4:3, 1.333 for 16:9, etc.
 static float g_aspectRatioMultiplier = 1.0f;
 
-// Hook memory for the movups patch
-static void* g_movupsHookMem = nullptr;
+// Return address for battle UI element position hook (set at patch time)
+static uintptr_t g_battleUIElementPosReturnAddr = 0;
+
+__declspec(naked) static void BattleUIElementPositionHook() {
+	__asm {
+		// Original: movups [eax], xmm0
+		movups [eax], xmm0
+		push eax
+		push ecx
+		// Scale word at [eax]: position *= aspect ratio
+		movzx ecx, word ptr [eax]
+		cvtsi2ss xmm1, ecx
+		mulss xmm1, dword ptr [g_aspectRatioMultiplier]
+		cvttss2si ecx, xmm1
+		mov word ptr [eax], cx
+		// Scale word at [eax+4]: width *= aspect ratio
+		movzx ecx, word ptr [eax+4]
+		cvtsi2ss xmm1, ecx
+		mulss xmm1, dword ptr [g_aspectRatioMultiplier]
+		cvttss2si ecx, xmm1
+		mov word ptr [eax+4], cx
+		pop ecx
+		pop eax
+		// Execute overwritten instruction: mov [eax+10], 0
+		mov dword ptr [eax+10h], 0
+		mov eax, dword ptr [g_battleUIElementPosReturnAddr]
+		jmp eax
+	}
+}
+
+// Return address for battle dialog text position hook (set at patch time)
+static uintptr_t g_battleDialogTextPosReturnAddr = 0;
+
+__declspec(naked) static void BattleDialogTextPositionHook() {
+	__asm {
+		movss xmm1, [ebp-90h]
+		mulss xmm1, dword ptr [g_aspectRatioMultiplier]
+		mov eax, dword ptr [g_battleDialogTextPosReturnAddr]
+		jmp eax
+	}
+}
 
 bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 	g_inBattleAddr = base + 0x6A1389;
@@ -113,142 +152,48 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 	}
 
 	// ============================================================
-	// Patch 8: Battle UI Element Position Scaling at CHRONOCROSS.exe+1CF28
-	// Original: movups [eax],xmm0 (0F 11 00) - 3 bytes
-	// Next instruction at +1CF2B: mov [eax+10],00000000 (C7 40 10 00 00 00 00)
-	// At this point, [eax] contains a 2-byte position value and [eax+4] contains
-	// a 2-byte width value that both need to be multiplied by aspect ratio
-	// (e.g., 1.333 for 16:9)
-	// We need 5 bytes for JMP, so we'll overwrite 2 bytes of the next instruction
-	// and restore them in our hook
+	// Patch 8: Battle UI Element Position at CHRONOCROSS.exe+1CF28
+	// Original: movups [eax],xmm0 (3 bytes) + start of mov [eax+10],0 (we overwrite 10 bytes).
+	// Scale position at [eax] and width at [eax+4] by aspect ratio, then run overwritten instruction.
 	// ============================================================
-	uintptr_t hookAddr6 = base + 0x1CF28;
-	uintptr_t nextInstrAddr = base + 0x1CF2B; // Start of next instruction
+	{
+		uintptr_t hookAddr8 = base + 0x1CF28;
+		g_battleUIElementPosReturnAddr = base + 0x1CF32;
 
-	// Allocate executable memory for our hook
-	g_movupsHookMem = VirtualAlloc(NULL, 128, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-	if (!g_movupsHookMem) {
-		std::cout << "Failed to allocate movups hook memory" << std::endl;
-		success = false;
-	} else {
-		// Build the hook code
-		uint8_t hookCode[96];
-		int offset = 0;
+		uint8_t jmpPatch8[10];
+		jmpPatch8[0] = 0xE9;
+		int32_t hookRel8 = (int32_t)((uintptr_t)&BattleUIElementPositionHook - (hookAddr8 + 5));
+		memcpy(&jmpPatch8[1], &hookRel8, 4);
+		jmpPatch8[5] = 0x90;
+		jmpPatch8[6] = 0x90;
+		jmpPatch8[7] = 0x90;
+		jmpPatch8[8] = 0x90;
+		jmpPatch8[9] = 0x90;
 
-		// Execute original instruction: movups [eax],xmm0
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x11;
-		hookCode[offset++] = 0x00;
+		if (!WriteMemory(hookAddr8, jmpPatch8, 10)) {
+			std::cout << "Failed to apply battle UI/menu patch 8 (battle UI element position)" << std::endl;
+			success = false;
+		}
+	}
 
-		// Save registers we'll use
-		hookCode[offset++] = 0x50; // push eax
-		hookCode[offset++] = 0x51; // push ecx
+	// ============================================================
+	// Patch 9: CHRONOCROSS.exe+1D8BF - Battle dialog text position
+	// Original: movss xmm1,[ebp-00000090]. Scale by aspect ratio, jump back.
+	// ============================================================
+	{
+		uintptr_t hookAddr9 = base + 0x1D8BF;
+		g_battleDialogTextPosReturnAddr = base + 0x1D8C7;
 
-		// Read the 2-byte value at [eax] (movzx ecx, word ptr [eax])
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0xB7;
-		hookCode[offset++] = 0x08;
+		uint8_t jmpPatch9[8];
+		jmpPatch9[0] = 0xE9;
+		int32_t hookRel9 = (int32_t)((uintptr_t)&BattleDialogTextPositionHook - (hookAddr9 + 5));
+		memcpy(&jmpPatch9[1], &hookRel9, 4);
+		jmpPatch9[5] = 0x90;
+		jmpPatch9[6] = 0x90;
+		jmpPatch9[7] = 0x90;
 
-		// Convert to float (cvtsi2ss xmm1, ecx)
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x2A;
-		hookCode[offset++] = 0xC9;
-
-		// Multiply by aspect ratio (mulss xmm1, [g_aspectRatioMultiplier])
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x59;
-		hookCode[offset++] = 0x0D;
-		uint32_t aspectRatioAddr = (uint32_t)(uintptr_t)&g_aspectRatioMultiplier;
-		memcpy(&hookCode[offset], &aspectRatioAddr, 4);
-		offset += 4;
-
-		// Convert back to integer (cvttss2si ecx, xmm1)
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x2C;
-		hookCode[offset++] = 0xC9;
-
-		// Write the 2-byte value back to [eax] (mov word ptr [eax], cx)
-		hookCode[offset++] = 0x66;
-		hookCode[offset++] = 0x89;
-		hookCode[offset++] = 0x08;
-
-		// Now handle the width at [eax+4]
-		// Read the 2-byte value at [eax+4] (movzx ecx, word ptr [eax+4])
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0xB7;
-		hookCode[offset++] = 0x48;
-		hookCode[offset++] = 0x04;
-
-		// Convert to float (cvtsi2ss xmm1, ecx)
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x2A;
-		hookCode[offset++] = 0xC9;
-
-		// Multiply by aspect ratio (mulss xmm1, [g_aspectRatioMultiplier])
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x59;
-		hookCode[offset++] = 0x0D;
-		memcpy(&hookCode[offset], &aspectRatioAddr, 4);
-		offset += 4;
-
-		// Convert back to integer (cvttss2si ecx, xmm1)
-		hookCode[offset++] = 0xF3;
-		hookCode[offset++] = 0x0F;
-		hookCode[offset++] = 0x2C;
-		hookCode[offset++] = 0xC9;
-
-		// Write the 2-byte value back to [eax+4] (mov word ptr [eax+4], cx)
-		hookCode[offset++] = 0x66;
-		hookCode[offset++] = 0x89;
-		hookCode[offset++] = 0x48;
-		hookCode[offset++] = 0x04;
-
-		// Restore registers
-		hookCode[offset++] = 0x59; // pop ecx
-		hookCode[offset++] = 0x58; // pop eax
-
-		// Execute the 2 bytes we overwrote from the next instruction
-		// mov [eax+10],00000000 starts with C7 40, we overwrote these
-		// So we need to execute: C7 40 10 00 00 00 00 (full instruction)
-		hookCode[offset++] = 0xC7; // mov dword ptr [eax+10], imm32
-		hookCode[offset++] = 0x40;
-		hookCode[offset++] = 0x10;
-		hookCode[offset++] = 0x00;
-		hookCode[offset++] = 0x00;
-		hookCode[offset++] = 0x00;
-		hookCode[offset++] = 0x00;
-
-		// jmp to instruction after the one we just executed (+1CF32)
-		hookCode[offset++] = 0xE9;
-		uintptr_t jmpFromAddr = (uintptr_t)g_movupsHookMem + offset;
-		uintptr_t returnAddr6 = base + 0x1CF32; // After mov [eax+10],00000000
-		int32_t jmpRel = (int32_t)(returnAddr6 - (jmpFromAddr + 4));
-		memcpy(&hookCode[offset], &jmpRel, 4);
-		offset += 4;
-
-		// Copy hook code to allocated memory
-		memcpy(g_movupsHookMem, hookCode, offset);
-
-		// Patch the original location: JMP (5 bytes) + NOPs (5 bytes) = 10 bytes total
-		// This replaces: movups [eax],xmm0 (3 bytes) + mov [eax+10],00000000 (7 bytes)
-		uint8_t jmpPatch[10];
-		jmpPatch[0] = 0xE9; // JMP rel32
-		int32_t hookRel = (int32_t)((uintptr_t)g_movupsHookMem - (hookAddr6 + 5));
-		memcpy(&jmpPatch[1], &hookRel, 4);
-		// Fill remaining bytes with NOPs
-		jmpPatch[5] = 0x90;
-		jmpPatch[6] = 0x90;
-		jmpPatch[7] = 0x90;
-		jmpPatch[8] = 0x90;
-		jmpPatch[9] = 0x90;
-		
-		if (!WriteMemory(hookAddr6, jmpPatch, 10)) {
-			std::cout << "Failed to apply battle UI/menu patch 8 (movups hook)" << std::endl;
+		if (!WriteMemory(hookAddr9, jmpPatch9, 8)) {
+			std::cout << "Failed to apply battle UI/menu patch 9 (battle dialog text position)" << std::endl;
 			success = false;
 		}
 	}
