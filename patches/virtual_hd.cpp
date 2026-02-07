@@ -163,12 +163,24 @@ uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
     }
 
     // Phase 1: Write local file headers + data
-    for (const auto& ze : m_entries) {
+    for (auto& ze : m_entries) {
         uint8_t* dst = buf + ze.virtualLocalHeaderOffset;
 
         if (ze.isModded) {
-            // Synthesize new LFH (stored/uncompressed)
             uint16_t nameLen = (uint16_t)ze.filename.size();
+            uint8_t* dataStart = dst + LFH_FIXED_SIZE + nameLen;
+
+            // Single read + CRC in memory (avoids double-read: ScanMods no longer calls ComputeCrc32)
+            std::ifstream modFile(ze.modFilePath, std::ios::binary);
+            if (modFile.is_open()) {
+                modFile.read((char*)dataStart, ze.moddedFileSize);
+                ze.moddedCrc32 = UpdateCrc32(0, dataStart, ze.moddedFileSize);
+                modFile.close();
+            } else {
+                std::cout << "[ModLoader] ERROR: Cannot read mod file: " << ze.modFilePath << std::endl;
+            }
+
+            // Synthesize new LFH (stored/uncompressed)
             WriteU32(dst + 0,  LFH_SIGNATURE);
             WriteU16(dst + 4,  20);                    // version needed
             WriteU16(dst + 6,  0);                     // flags
@@ -181,16 +193,6 @@ uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
             WriteU16(dst + 26, nameLen);
             WriteU16(dst + 28, 0);                     // no extra field
             memcpy(dst + LFH_FIXED_SIZE, ze.filename.data(), nameLen);
-
-            // Read mod file data directly into the buffer
-            uint8_t* dataStart = dst + LFH_FIXED_SIZE + nameLen;
-            std::ifstream modFile(ze.modFilePath, std::ios::binary);
-            if (modFile.is_open()) {
-                modFile.read((char*)dataStart, ze.moddedFileSize);
-                modFile.close();
-            } else {
-                std::cout << "[ModLoader] ERROR: Cannot read mod file: " << ze.modFilePath << std::endl;
-            }
         } else {
             // Copy entire entry (LFH + name + extra + data) from real mapped file
             memcpy(dst, realMappedBase + ze.localHeaderOffset, ze.realEntryTotalSize);
@@ -353,7 +355,8 @@ void VirtualHd::ScanMods(const std::string& modsDir) {
                 ze.isModded = true;
                 ze.modFilePath = dirEntry.path().string();
                 ze.moddedFileSize = (uint32_t)dirEntry.file_size();
-                ze.moddedCrc32 = ComputeCrc32(ze.modFilePath);
+                // CRC32 is computed lazily during CreateVirtualView to avoid double-reading
+                ze.moddedCrc32 = 0;
                 modCount++;
                 std::cout << "[ModLoader] Mod: " << relStr << " ("
                           << ze.moddedFileSize << " bytes)" << std::endl;
@@ -364,14 +367,3 @@ void VirtualHd::ScanMods(const std::string& modsDir) {
     std::cout << "[ModLoader] Found " << modCount << " mod file(s)" << std::endl;
 }
 
-uint32_t VirtualHd::ComputeCrc32(const std::string& filePath) {
-    std::ifstream file(filePath, std::ios::binary);
-    if (!file.is_open()) return 0;
-    uint32_t crc = 0;
-    char buf[8192];
-    while (file.read(buf, sizeof(buf)) || file.gcount() > 0) {
-        crc = UpdateCrc32(crc, buf, (size_t)file.gcount());
-        if (file.eof()) break;
-    }
-    return crc;
-}

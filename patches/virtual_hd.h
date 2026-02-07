@@ -69,7 +69,6 @@ private:
     bool ParseRealZip(HANDLE realHdDat);
     void ScanMods(const std::string& modsDir);
     void ComputeLayout();
-    uint32_t ComputeCrc32(const std::string& filePath);
 
     std::vector<ZipEntry> m_entries;
     std::vector<uint8_t> m_rawCd;  // raw CD bytes from real file
