@@ -236,12 +236,15 @@ bool Settings::SaveDefault(const std::string& filename) {
     file << "texture_dump_enabled=0" << std::endl << std::endl;
     file << "upscale_setup_completed=0" << std::endl;
     file << "# Force camera boundaries in rooms that might otherwise override them" << std::endl;
+    file << "# Disable if this breaks camera placement in a scene" << std::endl;
     file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
     file << "boundary_overrides=1" << std::endl << std::endl;
-    file << "# Enable or disable the mod loader" << std::endl;
-    file << "# Loads replacement assets from the mods/ folder by hooking hd.dat file I/O" << std::endl;
+    file << "# Enable or disable the mod loader (experimental)" << std::endl;
+    file << "# Loads replacement assets from the mods/ folder instead of from .dat files in /data/" << std::endl;
+    file << "# If a mod requests you to replace files in a .dat file you can simply add them here instead" << std::endl;
+    file << "# Eg instead of adding BGs to hd.dat's /data/map/mapbin/ you can add them to mods/map/mapbin" << std::endl;
     file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
-    file << "mod_loader_enabled=1" << std::endl;
+    file << "mod_loader_enabled=0" << std::endl;
 
     file.close();
     return true;
