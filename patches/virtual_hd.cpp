@@ -253,7 +253,7 @@ void VirtualHd::BuildSyntheticCDAndEOCD() {
         uint8_t* loc = cdStart + cdPos;
         WriteU32(loc + 0,  ZIP64_LOCATOR_SIGNATURE);
         WriteU32(loc + 4,  0);
-        WriteU64(loc + 8,  totalCdSize);  // offset of Zip64 EOCD (right after CD)
+        WriteU64(loc + 8,  m_virtualCdOffset + totalCdSize);  // file offset of Zip64 EOCD (from start)
         WriteU32(loc + 16, 1);
         cdPos += ZIP64_LOCATOR_SIZE;
     }
