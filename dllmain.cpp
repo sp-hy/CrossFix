@@ -65,8 +65,9 @@ DWORD WINAPI MainThread(LPVOID param) {
 	settings.Load(settingsPath);
 
 	// Initialize mod loader before version check — hooks must be active before game opens hd.dat
+	bool modLoaderEnabled = false;
 	if (settings.GetBool("mod_loader_enabled", true)) {
-		InitModLoader(exePathStr);
+		modLoaderEnabled = InitModLoader(exePathStr);
 	}
 
 	// Check executable version
@@ -82,6 +83,11 @@ DWORD WINAPI MainThread(LPVOID param) {
 
 	// Version check passed - enable patching
 	g_versionCheckPassed = true;
+
+	if (modLoaderEnabled) {
+		std::cout << std::endl;
+		std::cout << "[ModLoader] Mod loader enabled" << std::endl;
+	}
 
 	std::cout << std::endl;
 #ifdef _DEBUG

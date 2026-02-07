@@ -1,5 +1,4 @@
 #include "virtual_hd.h"
-#include <iostream>
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
@@ -92,17 +91,13 @@ VirtualHd::VirtualHd()
 VirtualHd::~VirtualHd() {}
 
 bool VirtualHd::Build(HANDLE realHdDat, const std::string& modsDir) {
-    if (!ParseRealZip(realHdDat)) {
-        std::cout << "[ModLoader] Failed to parse real hd.dat ZIP structure" << std::endl;
+    if (!ParseRealZip(realHdDat))
         return false;
-    }
-    std::cout << "[ModLoader] Parsed " << m_entries.size() << " entries from hd.dat" << std::endl;
 
     ScanMods(modsDir);
     ComputeLayout();
 
     m_built = true;
-    std::cout << "[ModLoader] Virtual layout computed: " << m_virtualSize << " bytes" << std::endl;
     return true;
 }
 
@@ -407,10 +402,8 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
     for (int64_t i = (int64_t)searchSize - EOCD_FIXED_SIZE; i >= 0; i--) {
         if (ReadU32(&tailBuf[i]) == EOCD_SIGNATURE) { eocdPos = i; break; }
     }
-    if (eocdPos < 0) {
-        std::cout << "[ModLoader] EOCD signature not found" << std::endl;
+    if (eocdPos < 0)
         return false;
-    }
 
     m_eocdOffset = (uint32_t)(realSize - searchSize + eocdPos);
     const uint8_t* eocd = &tailBuf[eocdPos];
@@ -427,31 +420,22 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
                 break;
             }
         }
-        if (locatorPos < 0) {
-            std::cout << "[ModLoader] Zip64 EOCD locator not found" << std::endl;
+        if (locatorPos < 0)
             return false;
-        }
         const uint8_t* loc = &tailBuf[locatorPos];
         uint64_t zip64EocdOffset = ReadU64(loc + 8);
 
         std::vector<uint8_t> zip64Buf(ZIP64_EOCD_FIXED_SIZE);
         if (!ReadAt(realHdDat, zip64EocdOffset, zip64Buf.data(), zip64Buf.size(), nullptr))
             return false;
-        if (ReadU32(zip64Buf.data()) != ZIP64_EOCD_SIGNATURE) {
-            std::cout << "[ModLoader] Zip64 EOCD signature not found" << std::endl;
+        if (ReadU32(zip64Buf.data()) != ZIP64_EOCD_SIGNATURE)
             return false;
-        }
         if (numEntries == 0xFFFF)
             numEntries = (uint16_t)(ReadU64(zip64Buf.data() + 32) & 0xFFFF);
         if (m_cdSize == 0xFFFFFFFF)
             m_cdSize = ReadU64(zip64Buf.data() + 40);
         if (m_cdOffset == 0xFFFFFFFF)
             m_cdOffset = ReadU64(zip64Buf.data() + 48);
-        std::cout << "[ModLoader] Zip64: " << numEntries << " entries, CD at " << m_cdOffset
-                  << ", size " << m_cdSize << std::endl;
-    } else {
-        std::cout << "[ModLoader] EOCD: " << numEntries << " entries, CD at " << m_cdOffset
-                  << ", size " << m_cdSize << std::endl;
     }
 
     m_rawCd.resize((size_t)m_cdSize);
@@ -517,7 +501,6 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
 void VirtualHd::ScanMods(const std::string& modsDir) {
     if (!fs::exists(modsDir) || !fs::is_directory(modsDir)) return;
 
-    int modCount = 0;
     for (auto& dirEntry : fs::recursive_directory_iterator(modsDir)) {
         if (!dirEntry.is_regular_file()) continue;
 
@@ -530,13 +513,9 @@ void VirtualHd::ScanMods(const std::string& modsDir) {
                 ze.moddedFileSize = (uint32_t)dirEntry.file_size();
                 // CRC32 is computed lazily in ReadAtVirtualOffset when serving modded data
                 ze.moddedCrc32 = 0;
-                modCount++;
-                std::cout << "[ModLoader] Mod: " << relStr << " ("
-                          << ze.moddedFileSize << " bytes)" << std::endl;
                 break;
             }
         }
     }
-    std::cout << "[ModLoader] Found " << modCount << " mod file(s)" << std::endl;
 }
 
