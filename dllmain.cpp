@@ -64,13 +64,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 	Settings settings;
 	settings.Load(settingsPath);
 
-	// Initialize mod loader before version check — hooks must be active before game opens hd.dat
-	bool modLoaderEnabled = false;
-	if (settings.GetBool("mod_loader_enabled", true)) {
-		modLoaderEnabled = InitModLoader(exePathStr);
-	}
-
-	// Check executable version
+	// Check executable version first — must pass before any patches (including mod loader)
 	const char* expectedVersion = "1.0.1.0";
 	if (!CheckExecutableVersion(exePath, expectedVersion)) {
 		std::cout << std::endl;
@@ -81,8 +75,15 @@ DWORD WINAPI MainThread(LPVOID param) {
 		return 0;
 	}
 
-	// Version check passed - enable patching
+	// Version check passed - enable patching (set BEFORE InitModLoader to avoid race:
+	// if the game creates D3D11 device while mod loader init runs, hooks would be skipped)
 	g_versionCheckPassed = true;
+
+	// Initialize mod loader — hooks must be active before game opens hd.dat
+	bool modLoaderEnabled = false;
+	if (settings.GetBool("mod_loader_enabled", true)) {
+		modLoaderEnabled = InitModLoader(exePathStr);
+	}
 
 	if (modLoaderEnabled) {
 		std::cout << std::endl;
