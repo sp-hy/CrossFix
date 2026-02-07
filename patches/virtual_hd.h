@@ -10,7 +10,7 @@ struct ZipEntry {
     uint32_t uncompressedSize;
     uint16_t compressionMethod;
     uint32_t crc32;
-    uint32_t localHeaderOffset;  // offset in real hd.dat
+    uint64_t localHeaderOffset;  // offset in real file (64-bit for Zip64)
     uint16_t extraFieldLength;   // CD extra field length
     uint16_t fileCommentLength;
     uint16_t internalAttrs;
@@ -26,15 +26,15 @@ struct ZipEntry {
     uint16_t lfhNameLength;
     uint16_t lfhExtraLength;
 
-    // Offset in the real file where the file DATA starts
-    uint32_t dataOffset;
+    // Offset in the real file where the file DATA starts (64-bit for Zip64)
+    uint64_t dataOffset;
 
     // Offset and size of this entry within the raw CD buffer
     uint32_t cdEntryOffset;
     uint32_t cdEntrySize;
 
     // Total size of this entry in the real file (LFH + name + extra + data)
-    uint32_t realEntryTotalSize;
+    uint64_t realEntryTotalSize;
 
     // Virtual layout (computed by ComputeLayout)
     uint64_t virtualLocalHeaderOffset;
@@ -72,8 +72,8 @@ private:
 
     std::vector<ZipEntry> m_entries;
     std::vector<uint8_t> m_rawCd;  // raw CD bytes from real file
-    uint32_t m_cdOffset;
-    uint32_t m_cdSize;
+    uint64_t m_cdOffset;   // 64-bit for Zip64
+    uint64_t m_cdSize;
     uint32_t m_eocdOffset;
     uint64_t m_virtualSize;
     uint64_t m_virtualCdOffset;

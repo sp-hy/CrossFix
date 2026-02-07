@@ -1,17 +1,23 @@
 #include "virtual_hd.h"
 #include <iostream>
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 
 namespace fs = std::filesystem;
 
-static constexpr uint32_t EOCD_SIGNATURE = 0x06054b50;
-static constexpr uint32_t CD_SIGNATURE   = 0x02014b50;
-static constexpr uint32_t LFH_SIGNATURE  = 0x04034b50;
-static constexpr uint32_t EOCD_FIXED_SIZE = 22;
-static constexpr uint32_t CD_FIXED_SIZE   = 46;
-static constexpr uint32_t LFH_FIXED_SIZE  = 30;
+static constexpr uint32_t EOCD_SIGNATURE     = 0x06054b50;
+static constexpr uint32_t ZIP64_EOCD_SIGNATURE = 0x06064b50;
+static constexpr uint32_t ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
+static constexpr uint32_t CD_SIGNATURE       = 0x02014b50;
+static constexpr uint32_t LFH_SIGNATURE      = 0x04034b50;
+static constexpr uint32_t EOCD_FIXED_SIZE    = 22;
+static constexpr uint32_t ZIP64_LOCATOR_SIZE = 20;
+static constexpr uint32_t ZIP64_EOCD_FIXED_SIZE = 56;  // up to and including CD offset
+static constexpr uint32_t CD_FIXED_SIZE      = 46;
+static constexpr uint32_t LFH_FIXED_SIZE     = 30;
+static constexpr uint16_t ZIP64_EXTRA_ID     = 0x0001;
 
 // CRC32
 static uint32_t s_crc32Table[256];
@@ -36,14 +42,23 @@ static uint32_t UpdateCrc32(uint32_t crc, const void* data, size_t size) {
     return ~crc;
 }
 
-static bool ReadAt(HANDLE hFile, uint64_t offset, void* buffer, uint32_t size, uint32_t* bytesRead) {
+static bool ReadAt(HANDLE hFile, uint64_t offset, void* buffer, size_t size, size_t* bytesRead) {
     LARGE_INTEGER li;
     li.QuadPart = (LONGLONG)offset;
     if (!SetFilePointerEx(hFile, li, NULL, FILE_BEGIN)) return false;
-    DWORD dwRead = 0;
-    if (!ReadFile(hFile, buffer, size, &dwRead, NULL)) return false;
-    if (bytesRead) *bytesRead = dwRead;
-    return true;
+    size_t remaining = size;
+    uint8_t* dst = (uint8_t*)buffer;
+    while (remaining > 0) {
+        DWORD toRead = (DWORD)(remaining > 0x7FFFFFFFu ? 0x7FFFFFFFu : remaining);
+        DWORD dwRead = 0;
+        if (!ReadFile(hFile, dst, toRead, &dwRead, NULL)) return false;
+        if (dwRead == 0) break;
+        dst += dwRead;
+        remaining -= dwRead;
+        if (bytesRead) *bytesRead = size - remaining;
+    }
+    if (bytesRead) *bytesRead = size - remaining;
+    return remaining == 0;
 }
 
 static uint16_t ReadU16(const uint8_t* p) {
@@ -51,6 +66,9 @@ static uint16_t ReadU16(const uint8_t* p) {
 }
 static uint32_t ReadU32(const uint8_t* p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+static uint64_t ReadU64(const uint8_t* p) {
+    return (uint64_t)ReadU32(p) | ((uint64_t)ReadU32(p + 4) << 32);
 }
 static void WriteU16(uint8_t* p, uint16_t v) {
     p[0] = (uint8_t)(v); p[1] = (uint8_t)(v >> 8);
@@ -61,8 +79,8 @@ static void WriteU32(uint8_t* p, uint32_t v) {
 }
 
 VirtualHd::VirtualHd()
-    : m_cdOffset(0), m_cdSize(0), m_eocdOffset(0),
-      m_virtualSize(0), m_virtualCdOffset(0), m_built(false) {
+    : m_cdOffset(0), m_cdSize(0), m_eocdOffset(0), m_virtualSize(0),
+      m_virtualCdOffset(0), m_built(false) {
     InitCrc32Table();
 }
 
@@ -195,7 +213,11 @@ uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
             memcpy(dst + LFH_FIXED_SIZE, ze.filename.data(), nameLen);
         } else {
             // Copy entire entry (LFH + name + extra + data) from real mapped file
-            memcpy(dst, realMappedBase + ze.localHeaderOffset, ze.realEntryTotalSize);
+            if (ze.localHeaderOffset > SIZE_MAX || ze.realEntryTotalSize > SIZE_MAX) {
+                std::cout << "[ModLoader] Entry offset/size exceeds addressable range, skipping" << std::endl;
+            } else {
+                memcpy(dst, realMappedBase + (size_t)ze.localHeaderOffset, (size_t)ze.realEntryTotalSize);
+            }
         }
     }
 
@@ -256,15 +278,42 @@ uint8_t* VirtualHd::CreateVirtualView(const uint8_t* realMappedBase) {
     return buf;
 }
 
+// Parse Zip64 extended info extra field (ID 0x0001) for 64-bit sizes/offset
+static void ParseZip64Extra(ZipEntry& ze, const uint8_t* extra, uint16_t extraLen) {
+    const uint8_t* end = extra + extraLen;
+    while (extra + 4 <= end) {
+        uint16_t id = ReadU16(extra);
+        uint16_t size = ReadU16(extra + 2);
+        extra += 4;
+        if (extra + size > end) break;
+        if (id == ZIP64_EXTRA_ID && size >= 8) {
+            const uint8_t* p = extra;
+            if (ze.uncompressedSize == 0xFFFFFFFF && p + 8 <= extra + size) {
+                ze.uncompressedSize = (uint32_t)ReadU64(p);
+                p += 8;
+            }
+            if (ze.compressedSize == 0xFFFFFFFF && p + 8 <= extra + size) {
+                ze.compressedSize = (uint32_t)ReadU64(p);
+                p += 8;
+            }
+            if (ze.localHeaderOffset == 0xFFFFFFFFULL && p + 8 <= extra + size) {
+                ze.localHeaderOffset = ReadU64(p);
+                p += 8;
+            }
+            break;
+        }
+        extra += size;
+    }
+}
+
 bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
     LARGE_INTEGER fileSize;
     if (!GetFileSizeEx(realHdDat, &fileSize)) return false;
     uint64_t realSize = (uint64_t)fileSize.QuadPart;
 
-    uint32_t searchSize = (uint32_t)(std::min)(realSize, (uint64_t)(EOCD_FIXED_SIZE + 65535));
+    uint32_t searchSize = (uint32_t)(std::min)(realSize, (uint64_t)(EOCD_FIXED_SIZE + 65535 + ZIP64_LOCATOR_SIZE + 64));
     std::vector<uint8_t> tailBuf(searchSize);
-    uint32_t readCount = 0;
-    if (!ReadAt(realHdDat, realSize - searchSize, tailBuf.data(), searchSize, &readCount))
+    if (!ReadAt(realHdDat, realSize - searchSize, tailBuf.data(), searchSize, nullptr))
         return false;
 
     int64_t eocdPos = -1;
@@ -282,12 +331,44 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
     m_cdSize   = ReadU32(eocd + 12);
     m_cdOffset = ReadU32(eocd + 16);
 
-    std::cout << "[ModLoader] EOCD: " << numEntries << " entries, CD at " << m_cdOffset
-              << ", size " << m_cdSize << std::endl;
+    // Zip64: EOCD fields 0xFFFFFFFF/0xFFFF mean value is in Zip64 EOCD
+    if (m_cdOffset == 0xFFFFFFFFULL || m_cdSize == 0xFFFFFFFFULL || numEntries == 0xFFFF) {
+        int64_t locatorPos = -1;
+        for (int64_t i = eocdPos - (int64_t)ZIP64_LOCATOR_SIZE; i >= 0; i--) {
+            if (ReadU32(&tailBuf[i]) == ZIP64_LOCATOR_SIGNATURE) {
+                locatorPos = i;
+                break;
+            }
+        }
+        if (locatorPos < 0) {
+            std::cout << "[ModLoader] Zip64 EOCD locator not found" << std::endl;
+            return false;
+        }
+        const uint8_t* loc = &tailBuf[locatorPos];
+        uint64_t zip64EocdOffset = ReadU64(loc + 8);
 
-    // Read and store the raw CD (we'll copy from it for unmodded entries)
-    m_rawCd.resize(m_cdSize);
-    if (!ReadAt(realHdDat, m_cdOffset, m_rawCd.data(), m_cdSize, &readCount))
+        std::vector<uint8_t> zip64Buf(ZIP64_EOCD_FIXED_SIZE);
+        if (!ReadAt(realHdDat, zip64EocdOffset, zip64Buf.data(), zip64Buf.size(), nullptr))
+            return false;
+        if (ReadU32(zip64Buf.data()) != ZIP64_EOCD_SIGNATURE) {
+            std::cout << "[ModLoader] Zip64 EOCD signature not found" << std::endl;
+            return false;
+        }
+        if (numEntries == 0xFFFF)
+            numEntries = (uint16_t)(ReadU64(zip64Buf.data() + 32) & 0xFFFF);
+        if (m_cdSize == 0xFFFFFFFF)
+            m_cdSize = ReadU64(zip64Buf.data() + 40);
+        if (m_cdOffset == 0xFFFFFFFF)
+            m_cdOffset = ReadU64(zip64Buf.data() + 48);
+        std::cout << "[ModLoader] Zip64: " << numEntries << " entries, CD at " << m_cdOffset
+                  << ", size " << m_cdSize << std::endl;
+    } else {
+        std::cout << "[ModLoader] EOCD: " << numEntries << " entries, CD at " << m_cdOffset
+                  << ", size " << m_cdSize << std::endl;
+    }
+
+    m_rawCd.resize((size_t)m_cdSize);
+    if (!ReadAt(realHdDat, m_cdOffset, m_rawCd.data(), m_cdSize, nullptr))
         return false;
 
     m_entries.clear();
@@ -295,7 +376,7 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
     uint32_t pos = 0;
 
     for (uint16_t i = 0; i < numEntries; i++) {
-        if (pos + CD_FIXED_SIZE > m_cdSize) return false;
+        if (pos + CD_FIXED_SIZE > (uint32_t)m_cdSize) return false;
         const uint8_t* entry = &m_rawCd[pos];
         if (ReadU32(entry) != CD_SIGNATURE) return false;
 
@@ -317,8 +398,14 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
         ze.externalAttrs     = ReadU32(entry + 38);
         ze.localHeaderOffset = ReadU32(entry + 42);
 
-        if (pos + CD_FIXED_SIZE + nameLen > m_cdSize) return false;
+        if (pos + CD_FIXED_SIZE + nameLen > (uint32_t)m_cdSize) return false;
         ze.filename = std::string((const char*)(entry + CD_FIXED_SIZE), nameLen);
+
+        if (ze.extraFieldLength > 0 &&
+            (ze.localHeaderOffset == 0xFFFFFFFFULL || ze.compressedSize == 0xFFFFFFFF ||
+             ze.uncompressedSize == 0xFFFFFFFF)) {
+            ParseZip64Extra(ze, entry + CD_FIXED_SIZE + nameLen, ze.extraFieldLength);
+        }
 
         ze.cdEntryOffset = pos;
         ze.cdEntrySize = CD_FIXED_SIZE + nameLen + ze.extraFieldLength + ze.fileCommentLength;
@@ -327,10 +414,9 @@ bool VirtualHd::ParseRealZip(HANDLE realHdDat) {
         pos += m_entries.back().cdEntrySize;
     }
 
-    // Read each LFH to get actual data offsets and entry sizes
     for (auto& ze : m_entries) {
         uint8_t lfhBuf[LFH_FIXED_SIZE];
-        if (!ReadAt(realHdDat, ze.localHeaderOffset, lfhBuf, LFH_FIXED_SIZE, &readCount))
+        if (!ReadAt(realHdDat, ze.localHeaderOffset, lfhBuf, LFH_FIXED_SIZE, nullptr))
             return false;
         ze.lfhNameLength  = ReadU16(lfhBuf + 26);
         ze.lfhExtraLength = ReadU16(lfhBuf + 28);
