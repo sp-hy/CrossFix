@@ -79,6 +79,9 @@ static void WriteU32(uint8_t* p, uint32_t v) {
     p[0] = (uint8_t)(v); p[1] = (uint8_t)(v >> 8);
     p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
 }
+static void WriteU64(uint8_t* p, uint64_t v) {
+    WriteU32(p, (uint32_t)(v)); WriteU32(p + 4, (uint32_t)(v >> 32));
+}
 
 VirtualHd::VirtualHd()
     : m_cdOffset(0), m_cdSize(0), m_eocdOffset(0), m_virtualSize(0),
@@ -131,16 +134,25 @@ void VirtualHd::ComputeLayout() {
     m_virtualCdOffset = offset;
 
     // CD size: for unmodded entries use original raw size, for modded synthesize
+    // When Zip64: add 12 bytes per entry with virtualLocalHeaderOffset > 4GB
+    static constexpr uint64_t MAX_32BIT = 0xFFFFFFFFULL;
     uint64_t cdSize = 0;
     for (const auto& ze : m_entries) {
         if (ze.isModded) {
             cdSize += CD_FIXED_SIZE + ze.filename.size();
+            if (ze.virtualLocalHeaderOffset > MAX_32BIT)
+                cdSize += 12;  // Zip64 extra (ID 0x0001, size 8, offset)
         } else {
             cdSize += ze.cdEntrySize;
+            if (ze.virtualLocalHeaderOffset > MAX_32BIT)
+                cdSize += 12;  // Zip64 extra for local header offset
         }
     }
 
+    bool useZip64 = (m_virtualCdOffset > MAX_32BIT || cdSize > MAX_32BIT);
     offset += cdSize;
+    if (useZip64)
+        offset += ZIP64_EOCD_FIXED_SIZE + ZIP64_LOCATOR_SIZE;
     offset += EOCD_FIXED_SIZE;
 
     m_virtualSize = offset;
@@ -148,51 +160,112 @@ void VirtualHd::ComputeLayout() {
 
 void VirtualHd::BuildSyntheticCDAndEOCD() {
     if (!m_syntheticCD.empty()) return;
+    static constexpr uint64_t MAX_32BIT = 0xFFFFFFFFULL;
+
     uint64_t cdSize = 0;
-    for (const auto& ze : m_entries)
-        cdSize += ze.isModded ? (CD_FIXED_SIZE + ze.filename.size()) : ze.cdEntrySize;
+    for (const auto& ze : m_entries) {
+        if (ze.isModded)
+            cdSize += CD_FIXED_SIZE + ze.filename.size() + (ze.virtualLocalHeaderOffset > MAX_32BIT ? 12u : 0u);
+        else
+            cdSize += ze.cdEntrySize + (ze.virtualLocalHeaderOffset > MAX_32BIT ? 12u : 0u);
+    }
+    bool useZip64 = (m_virtualCdOffset > MAX_32BIT || cdSize > MAX_32BIT);
+    cdSize += useZip64 ? (ZIP64_EOCD_FIXED_SIZE + ZIP64_LOCATOR_SIZE) : 0;
     cdSize += EOCD_FIXED_SIZE;
+
     m_syntheticCD.resize((size_t)cdSize);
     uint8_t* cdStart = m_syntheticCD.data();
     uint64_t cdPos = 0;
+
     for (const auto& ze : m_entries) {
         uint8_t* p = cdStart + cdPos;
         if (ze.isModded) {
             uint16_t nameLen = (uint16_t)ze.filename.size();
+            bool needsZip64Off = (ze.virtualLocalHeaderOffset > MAX_32BIT);
+            uint16_t extraLen = needsZip64Off ? 12 : 0;
             WriteU32(p + 0,  CD_SIGNATURE);
             WriteU16(p + 4,  ze.versionMadeBy);
-            WriteU16(p + 6,  20);
+            WriteU16(p + 6,  45);  // version 4.5 for Zip64
             WriteU16(p + 8,  0);
             WriteU16(p + 10, 0);
             WriteU16(p + 12, ze.lastModTime);
             WriteU16(p + 14, ze.lastModDate);
             WriteU32(p + 16, ze.moddedCrc32);
-            WriteU32(p + 20, ze.moddedFileSize);
-            WriteU32(p + 24, ze.moddedFileSize);
+            WriteU32(p + 20, (uint32_t)(ze.moddedFileSize > MAX_32BIT ? MAX_32BIT : ze.moddedFileSize));
+            WriteU32(p + 24, (uint32_t)(ze.moddedFileSize > MAX_32BIT ? MAX_32BIT : ze.moddedFileSize));
             WriteU16(p + 28, nameLen);
-            WriteU16(p + 30, 0);
+            WriteU16(p + 30, extraLen);
             WriteU16(p + 32, 0);
             WriteU16(p + 34, 0);
             WriteU16(p + 36, ze.internalAttrs);
             WriteU32(p + 38, ze.externalAttrs);
-            WriteU32(p + 42, (uint32_t)ze.virtualLocalHeaderOffset);
+            WriteU32(p + 42, (uint32_t)(needsZip64Off ? MAX_32BIT : ze.virtualLocalHeaderOffset));
             memcpy(p + CD_FIXED_SIZE, ze.filename.data(), nameLen);
-            cdPos += CD_FIXED_SIZE + nameLen;
+            size_t entryPos = CD_FIXED_SIZE + nameLen;
+            if (needsZip64Off) {
+                WriteU16(p + entryPos, ZIP64_EXTRA_ID);
+                WriteU16(p + entryPos + 2, 8);
+                WriteU64(p + entryPos + 4, ze.virtualLocalHeaderOffset);
+                entryPos += 12;
+            }
+            cdPos += entryPos;
         } else {
-            memcpy(p, m_rawCd.data() + ze.cdEntryOffset, ze.cdEntrySize);
-            WriteU32(p + 42, (uint32_t)ze.virtualLocalHeaderOffset);
-            cdPos += ze.cdEntrySize;
+            const uint8_t* src = m_rawCd.data() + ze.cdEntryOffset;
+            uint16_t nameLen = ReadU16(src + 28);
+            uint16_t extraLen = ReadU16(src + 30);
+            uint16_t commentLen = ReadU16(src + 32);
+            if (ze.virtualLocalHeaderOffset > MAX_32BIT) {
+                // Build entry with Zip64 extra appended to original extra field
+                size_t beforeExtra = CD_FIXED_SIZE + nameLen;
+                size_t extraTotal = extraLen + 12;
+                memcpy(p, src, beforeExtra);
+                WriteU32(p + 42, (uint32_t)MAX_32BIT);
+                WriteU16(p + 30, (uint16_t)extraTotal);
+                memcpy(p + beforeExtra, src + beforeExtra, extraLen);
+                WriteU16(p + beforeExtra + extraLen, ZIP64_EXTRA_ID);
+                WriteU16(p + beforeExtra + extraLen + 2, 8);
+                WriteU64(p + beforeExtra + extraLen + 4, ze.virtualLocalHeaderOffset);
+                memcpy(p + beforeExtra + extraTotal, src + beforeExtra + extraLen, commentLen);
+                cdPos += beforeExtra + extraTotal + commentLen;
+            } else {
+                memcpy(p, src, ze.cdEntrySize);
+                WriteU32(p + 42, (uint32_t)ze.virtualLocalHeaderOffset);
+                cdPos += ze.cdEntrySize;
+            }
         }
     }
-    uint32_t totalCdSize = (uint32_t)cdPos;
+
+    uint64_t totalCdSize = cdPos;
+    if (useZip64) {
+        uint8_t* z64 = cdStart + cdPos;
+        WriteU32(z64 + 0,  ZIP64_EOCD_SIGNATURE);
+        WriteU64(z64 + 4,  44);  // size of Zip64 EOCD record (56 - 12)
+        WriteU16(z64 + 12, 45);
+        WriteU16(z64 + 14, 45);
+        WriteU32(z64 + 16, 0);
+        WriteU32(z64 + 20, 0);
+        WriteU64(z64 + 24, (uint64_t)m_entries.size());
+        WriteU64(z64 + 32, (uint64_t)m_entries.size());
+        WriteU64(z64 + 40, totalCdSize);
+        WriteU64(z64 + 48, m_virtualCdOffset);
+        cdPos += ZIP64_EOCD_FIXED_SIZE;
+
+        uint8_t* loc = cdStart + cdPos;
+        WriteU32(loc + 0,  ZIP64_LOCATOR_SIGNATURE);
+        WriteU32(loc + 4,  0);
+        WriteU64(loc + 8,  totalCdSize);  // offset of Zip64 EOCD (right after CD)
+        WriteU32(loc + 16, 1);
+        cdPos += ZIP64_LOCATOR_SIZE;
+    }
+
     uint8_t* eocd = cdStart + cdPos;
     WriteU32(eocd + 0,  EOCD_SIGNATURE);
     WriteU16(eocd + 4,  0);
     WriteU16(eocd + 6,  0);
-    WriteU16(eocd + 8,  (uint16_t)m_entries.size());
-    WriteU16(eocd + 10, (uint16_t)m_entries.size());
-    WriteU32(eocd + 12, totalCdSize);
-    WriteU32(eocd + 16, (uint32_t)m_virtualCdOffset);
+    WriteU16(eocd + 8,  (uint16_t)(m_entries.size() > 0xFFFF ? 0xFFFF : m_entries.size()));
+    WriteU16(eocd + 10, (uint16_t)(m_entries.size() > 0xFFFF ? 0xFFFF : m_entries.size()));
+    WriteU32(eocd + 12, (uint32_t)(useZip64 ? MAX_32BIT : totalCdSize));
+    WriteU32(eocd + 16, (uint32_t)(useZip64 ? MAX_32BIT : m_virtualCdOffset));
     WriteU16(eocd + 20, 0);
 }
 
@@ -216,14 +289,19 @@ size_t VirtualHd::ReadAtVirtualOffset(HANDLE realFile, uint64_t virtualOffset, v
     uint64_t pos = virtualOffset;
 
     while (totalRead < size && pos < m_virtualCdOffset) {
-        size_t entryIdx = 0;
-        for (; entryIdx < m_entries.size(); entryIdx++) {
-            const auto& ze = m_entries[entryIdx];
-            if (pos < ze.virtualLocalHeaderOffset + ze.virtualEntryTotalSize) break;
+        // Binary search: find entry containing pos (entries sorted by virtualLocalHeaderOffset)
+        size_t lo = 0, hi = m_entries.size();
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (m_entries[mid].virtualLocalHeaderOffset <= pos)
+                lo = mid + 1;
+            else
+                hi = mid;
         }
-        if (entryIdx >= m_entries.size()) break;
-
+        if (lo == 0) break;
+        size_t entryIdx = lo - 1;
         const auto& ze = m_entries[entryIdx];
+        if (pos >= ze.virtualLocalHeaderOffset + ze.virtualEntryTotalSize) break;
         uint64_t offsetInEntry = pos - ze.virtualLocalHeaderOffset;
         uint64_t bytesInEntry = ze.virtualEntryTotalSize - offsetInEntry;
         size_t toRead = (size_t)(std::min)((uint64_t)(size - totalRead), bytesInEntry);

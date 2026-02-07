@@ -42,6 +42,7 @@ struct DatState {
     bool built = false;
     uint64_t viewSize = 0;
     bool useReadFileSynthesis = false;  // serve via ReadFile only (no virtual buffer)
+    bool loggedIntercept = false;       // log only first intercept per dat (avoid console flood)
 };
 static std::unordered_map<std::string, std::unique_ptr<DatState>> g_datStates;
 
@@ -107,8 +108,6 @@ static HANDLE WINAPI HookedCreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess
 
     std::string datKey = GetDatKeyFromPathW(lpFileName);
     if (h != INVALID_HANDLE_VALUE && !datKey.empty() && IsGameDataPathW(lpFileName) && !IsBlacklistedDatKey(datKey)) {
-        std::wcout << L"[ModLoader] Intercepted .dat open: " << lpFileName << std::endl;
-
         std::string modsSubdir = g_modsDir + "/" + datKey;
         DatState* state = nullptr;
         {
@@ -124,7 +123,8 @@ static HANDLE WINAPI HookedCreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess
                 if (state->virtualHd.HasMods()) {
                     state->viewSize = state->virtualHd.GetVirtualSize();
                     state->useReadFileSynthesis = true;
-                    std::cout << "[ModLoader] Using ReadFile synthesis for " << datKey << ".dat (" << state->viewSize << " bytes)" << std::endl;
+                    std::cout << "[ModLoader] Using ReadFile synthesis for " << datKey << ".dat ("
+                              << state->viewSize << " bytes)" << std::endl;
                 }
             } else {
                 std::cout << "[ModLoader] Failed to build virtual layout for " << datKey << ".dat" << std::endl;
@@ -135,6 +135,10 @@ static HANDLE WINAPI HookedCreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess
             std::lock_guard<std::mutex> lock(g_mutex);
             g_handleToDatKey[h] = datKey;
             g_datPosition[h] = 0;
+            if (!state->loggedIntercept) {
+                state->loggedIntercept = true;
+                std::wcout << L"[ModLoader] Intercepted .dat: " << lpFileName << std::endl;
+            }
         }
     }
 
