@@ -55,6 +55,29 @@ __declspec(naked) static void BattleDialogTextPositionHook() {
 	}
 }
 
+// Battle dialog cursor: add 30*aspectRatio to [base+0x186DCB0] after the original add (2-byte value)
+static uintptr_t g_battleDialogCursorAddr = 0;       // address of the word (set at patch time)
+static int32_t g_battleDialogCursorAddend = 30;     // 30 * aspectRatio, flattened to whole number
+static uintptr_t g_battleDialogCursorReturnAddr = 0;
+
+__declspec(naked) static void BattleDialogCursorHook() {
+	__asm {
+		// Load actual game address (value of our pointer), not the address of our global
+		push edx
+		mov edx, dword ptr [g_battleDialogCursorAddr]
+		// Original: add [addr], eax (target is 2-byte)
+		add word ptr [edx], ax
+		// Additional add: 30 * aspectRatio (flattened integer)
+		push ecx
+		mov ecx, dword ptr [g_battleDialogCursorAddend]
+		add word ptr [edx], cx
+		pop ecx
+		pop edx
+		mov eax, dword ptr [g_battleDialogCursorReturnAddr]
+		jmp eax
+	}
+}
+
 bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 	g_inBattleAddr = base + 0x6A1389;
 	bool success = true;
@@ -198,6 +221,27 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 		}
 	}
 
+	// ============================================================
+	// Patch 10: CHRONOCROSS.exe+1CAFC - Battle dialog cursor
+	// Original: add [CHRONOCROSS.exe+186DCB0], eax (6 bytes). We add 30*aspectRatio after it.
+	// ============================================================
+	{
+		uintptr_t hookAddr10 = base + 0x1CAFC;
+		g_battleDialogCursorAddr = base + 0x186DCB0;
+		g_battleDialogCursorReturnAddr = base + 0x1CB02;
+
+		uint8_t jmpPatch10[6];
+		jmpPatch10[0] = 0xE9;
+		int32_t hookRel10 = (int32_t)((uintptr_t)&BattleDialogCursorHook - (hookAddr10 + 5));
+		memcpy(&jmpPatch10[1], &hookRel10, 4);
+		jmpPatch10[5] = 0x90;
+
+		if (!WriteMemory(hookAddr10, jmpPatch10, 6)) {
+			std::cout << "Failed to apply battle UI/menu patch 10 (battle dialog cursor)" << std::endl;
+			success = false;
+		}
+	}
+
 	if (success) {
 		std::cout << "Battle UI/Menu patch applied" << std::endl;
 	}
@@ -223,6 +267,7 @@ void UpdateBattleUIAndMenuValues(float aspectRatio) {
 		if (g_baseRes != 1280 || g_aspectRatioMultiplier != 1.0f) {
 			g_baseRes = 1280;
 			g_aspectRatioMultiplier = 1.0f;
+			g_battleDialogCursorAddend = 30;  // 30 * 1.0
 #ifdef _DEBUG
 			std::cout << "Battle UI/Menu baseRes restored to default (4:3): 1280, aspect multiplier: 1.0" << std::endl;
 #endif
@@ -237,10 +282,12 @@ void UpdateBattleUIAndMenuValues(float aspectRatio) {
 		// For 4:3: 1.333 / 1.333 = 1.0
 		// For 16:9: 1.777 / 1.333 = 1.333
 		float newAspectMultiplier = aspectRatio / BASE_ASPECT;
+		int32_t newCursorAddend = (int32_t)(30.0f * newAspectMultiplier + 0.5f);
 
-		if (g_baseRes != newBaseRes || g_aspectRatioMultiplier != newAspectMultiplier) {
+		if (g_baseRes != newBaseRes || g_aspectRatioMultiplier != newAspectMultiplier || g_battleDialogCursorAddend != newCursorAddend) {
 			g_baseRes = newBaseRes;
 			g_aspectRatioMultiplier = newAspectMultiplier;
+			g_battleDialogCursorAddend = newCursorAddend;
 #ifdef _DEBUG
 			std::cout << "Battle UI/Menu baseRes updated: " << g_baseRes 
 					  << ", aspect multiplier: " << g_aspectRatioMultiplier
