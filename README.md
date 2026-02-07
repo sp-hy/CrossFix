@@ -14,6 +14,7 @@ Supports the latest Steam release v1.0.1.0
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 
 ## Todo:
+
 - PXGP
 - Minor remaining UI bugs
 - Modding Framework to use mods folder instead of dat/zips
@@ -27,7 +28,6 @@ Supports the latest Steam release v1.0.1.0
 
 Wine/Proton users should use the following:
 `ENABLE_GAMESCOPE_WSI=0` and `WINEDLLOVERRIDES="d3d11=n,b" %command%`
-
 
 ## Settings
 
@@ -59,7 +59,6 @@ upscale_scale=4
 
 - The widescreen fix requires the in-game setting **ScreenType: Full**
 - For double FPS mode, ensure the in-game slowdown mode is active (press F1). This should activate by default.
-
 
 ## Acknowledgements
 

@@ -1,12 +1,13 @@
 #pragma once
-#include <Windows.h>
 #include "../utils/memory.h"
+#include <Windows.h>
 
 // Apply the widescreen patch with a specific aspect ratio
 bool ApplyWidescreenPatch(uintptr_t base, float aspectRatio);
 
-// Auto-detect the user's aspect ratio and apply the appropriate widescreen patch
-bool ApplyWidescreenPatchAuto(uintptr_t base, float* outAspectRatio = nullptr);
+// Auto-detect the user's aspect ratio and apply the appropriate widescreen
+// patch
+bool ApplyWidescreenPatchAuto(uintptr_t base, float *outAspectRatio = nullptr);
 
 // Start dynamic resolution monitoring (for auto-detect mode)
 void StartDynamicWidescreenMonitoring(uintptr_t base);

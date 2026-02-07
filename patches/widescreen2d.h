@@ -2,7 +2,8 @@
 #include <Windows.h>
 
 // Initialize the ASM hook for widescreen 2D background transformation
-// This hooks the instruction at CHRONOCROSS.exe+1CCF93 to modify image dimensions
+// This hooks the instruction at CHRONOCROSS.exe+1CCF93 to modify image
+// dimensions
 bool InitWidescreen2DHook();
 
 // Set the widescreen ratio for 2D background transformation
