@@ -270,6 +270,8 @@ void InitializeDumpPath() {
   CreateDirectoryA((g_dumpPath + "\\BC3_DXT5").c_str(), NULL);
   CreateDirectoryA((g_dumpPath + "\\BC7").c_str(), NULL);
   CreateDirectoryA((g_dumpPath + "\\transparent").c_str(), NULL);
+  CreateDirectoryA((g_dumpPath + "\\rendertargets").c_str(), NULL);
+  CreateDirectoryA((g_dumpPath + "\\rendertargets\\transparent").c_str(), NULL);
   CreateDirectoryA((g_dumpPath + "\\other").c_str(), NULL);
 }
 
@@ -309,29 +311,22 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
     return false;
 
   // Skip if format is not dumpable
-  if (!IsDumpableFormat(pDesc->Format))
+  if (!IsDumpableFormat(pDesc->Format)) {
+    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height 
+              << " - unsupported format: " << pDesc->Format << std::endl;
     return false;
+  }
 
   // Skip if texture is too large (safety check)
-  if (pDesc->Width > 16384 || pDesc->Height > 16384)
-    return false;
-
-  // Skip render targets and depth stencils - they're harder to copy and might
-  // be in use
-  if (pDesc->BindFlags &
-      (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DEPTH_STENCIL)) {
+  if (pDesc->Width > 16384 || pDesc->Height > 16384) {
+    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height 
+              << " - too large" << std::endl;
     return false;
   }
 
-  // Skip if texture has no CPU access and isn't already staging
-  if (pDesc->Usage != D3D11_USAGE_STAGING &&
-      !(pDesc->CPUAccessFlags & D3D11_CPU_ACCESS_READ)) {
-    // We'll need to create a staging copy, but skip if it's a dynamic texture
-    // that might be in use
-    if (pDesc->Usage == D3D11_USAGE_DYNAMIC) {
-      return false;
-    }
-  }
+  // Note: We now allow render targets and depth stencils to be dumped
+  // They will be copied to a staging texture for reading
+  // This works for all texture types: default, dynamic, render targets, etc.
 
   ComPtr<ID3D11Device> pDevice;
   pTexture->GetDevice(&pDevice);
@@ -352,8 +347,10 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
 
   ComPtr<ID3D11Texture2D> pStaging;
   HRESULT hr = pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
-  if (FAILED(hr) || !pStaging)
+  if (FAILED(hr) || !pStaging) {
+    std::cout << "Failed to create staging texture for " << pDesc->Width << "x" << pDesc->Height << std::endl;
     return false;
+  }
 
   // Copy resource - this might fail if texture is in use, so handle gracefully
   pContext->CopyResource(pStaging.Get(), pTexture);
@@ -364,6 +361,8 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
   D3D11_MAPPED_SUBRESOURCE mapped = {};
   hr = pContext->Map(pStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
   if (FAILED(hr) || !mapped.pData) {
+    std::cout << "Failed to map staging texture for " << pDesc->Width << "x" << pDesc->Height 
+              << " HRESULT: 0x" << std::hex << hr << std::dec << std::endl;
     pStaging.Reset();
     return false;
   }
@@ -617,6 +616,8 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
                    const D3D11_SUBRESOURCE_DATA *pInitialData) {
   if (!IsTextureDumpEnabled() || !pTexture || !pDesc || !pDevice || !pContext)
     return;
+  
+  // Note: pInitialData can be nullptr for render targets - we'll handle that
 
   // Skip if another dump is in progress (simple rate limiting)
   if (InterlockedCompareExchange(&g_dumpInProgress, 1, 0) != 0) {
@@ -631,15 +632,35 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
 
   // Calculate hash
   uint64_t hash = HashTexture(pDesc, pInitialData);
+  
+  // For render targets without initial data, include the texture pointer in the hash
+  // to ensure each unique instance gets a unique hash (they all have the same descriptor)
+  bool isRenderTarget = (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) != 0;
+  if (isRenderTarget && !pInitialData) {
+    // XOR the texture pointer into the hash to make it unique per instance
+    hash ^= reinterpret_cast<uint64_t>(pTexture);
+  }
 
   // Check if we've recently dumped this texture (avoid rapid re-dumps)
   if (g_recentDumps.find(hash) != g_recentDumps.end()) {
+    std::cout << "Skipping " << (isRenderTarget ? "render target" : "texture")
+              << " " << pDesc->Width << "x" << pDesc->Height 
+              << " - already in cache (hash: 0x" << std::hex << hash << std::dec << ")" << std::endl;
     InterlockedExchange(&g_dumpInProgress, 0);
     return; // Recently dumped, skip
   }
 
   // Determine format folder
   std::string formatFolder = GetFormatFolderName(pDesc->Format);
+  
+  // Note: isRenderTarget already calculated above
+  
+  // Debug: Log render target detection
+  if (isRenderTarget) {
+    std::cout << "Detected render target: " << pDesc->Width << "x" << pDesc->Height 
+              << " Format: " << pDesc->Format << " pInitialData: " 
+              << (pInitialData ? "non-null" : "null") << std::endl;
+  }
 
   // Generate filename with decimal size first: WIDTHxHEIGHT_HASH.dds
   std::ostringstream filename;
@@ -655,7 +676,7 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
   // Check if file already exists in any folder (cache hit)
   std::vector<std::string> foldersToCheck = {
       "BGRA4",    "BGRA8", "RGBA8",       "BC1_DXT1", "BC2_DXT3",
-      "BC3_DXT5", "BC7",   "transparent", "other"};
+      "BC3_DXT5", "BC7",   "transparent", "rendertargets", "other"};
   for (const auto &folder : foldersToCheck) {
     std::string checkPath = g_dumpPath + "\\" + folder + "\\" + filenameStr;
     try {
@@ -675,22 +696,42 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
   bool dumped = false;
   bool isTransparent = false;
   try {
+    std::cout << "Attempting to save " << (isRenderTarget ? "render target" : "texture") 
+              << ": " << pDesc->Width << "x" << pDesc->Height << std::endl;
     if (SaveTextureAsDDS(pTexture, pDesc, tempPath, &isTransparent)) {
-      // If fully transparent, move to transparent folder
-      if (isTransparent) {
-        std::string finalPath = g_dumpPath + "\\transparent\\" + filenameStr;
-        // Delete from temp location and write to transparent folder
-        if (tempPath != finalPath) {
-          MoveFileA(tempPath.c_str(), finalPath.c_str());
-          std::cout << "Dumped transparent texture: " << finalPath << std::endl;
-        }
+      // Determine final folder based on texture properties
+      std::string finalPath;
+      
+      if (isRenderTarget && isTransparent) {
+        // Transparent render targets go to rendertargets/transparent
+        finalPath = g_dumpPath + "\\rendertargets\\transparent\\" + filenameStr;
+      } else if (isRenderTarget) {
+        // Non-transparent render targets go to rendertargets folder
+        finalPath = g_dumpPath + "\\rendertargets\\" + filenameStr;
+      } else if (isTransparent) {
+        // Transparent textures go to transparent folder
+        finalPath = g_dumpPath + "\\transparent\\" + filenameStr;
+      } else {
+        // Regular textures stay in format folder
+        finalPath = tempPath;
+      }
+      
+      // Move to final location if needed
+      if (tempPath != finalPath) {
+        MoveFileA(tempPath.c_str(), finalPath.c_str());
+        std::string typeDesc = isRenderTarget && isTransparent ? "transparent render target" :
+                               isRenderTarget ? "render target" : "transparent texture";
+        std::cout << "Dumped " << typeDesc << ": " << finalPath << std::endl;
       } else {
         std::cout << "Dumped texture: " << tempPath << std::endl;
       }
       dumped = true;
+    } else {
+      std::cout << "SaveTextureAsDDS failed for " << (isRenderTarget ? "render target" : "texture")
+                << ": " << pDesc->Width << "x" << pDesc->Height << std::endl;
     }
   } catch (...) {
-    // Silently fail to prevent crashes
+    std::cout << "Exception while saving texture: " << pDesc->Width << "x" << pDesc->Height << std::endl;
   }
 
   // If successfully dumped, add to recent dumps cache (limit cache size)
@@ -699,6 +740,9 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
       g_recentDumps.clear(); // Clear cache if it gets too large
     }
     g_recentDumps.insert(hash);
+    std::cout << "Added to cache: " << (isRenderTarget ? "render target" : "texture")
+              << " " << pDesc->Width << "x" << pDesc->Height 
+              << " (hash: 0x" << std::hex << hash << std::dec << ")" << std::endl;
   }
 
   // Release the lock
