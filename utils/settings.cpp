@@ -239,6 +239,10 @@ bool Settings::SaveDefault(const std::string &filename) {
           "everywhere)"
        << std::endl;
   file << "double_fps_mode=1" << std::endl << std::endl;
+  file << "# Hide the slow-motion icon (e.g. when using double FPS / slowdown)"
+       << std::endl;
+  file << "# 0 = show icon, 1 = hide icon (default)" << std::endl;
+  file << "hide_slow_icon=1" << std::endl << std::endl;
   file << "# Disable pause when window loses focus" << std::endl;
   file << "# 0 = game pauses when window is inactive (default behavior)"
        << std::endl;
@@ -304,6 +308,7 @@ bool Settings::HasKey(const std::string &key) const {
 std::vector<std::string> Settings::GetRequiredKeys() {
   return {"widescreen_enabled",
           "double_fps_mode",
+          "hide_slow_icon",
           "disable_pause_on_focus_loss",
           "upscale_enabled",
           "upscale_scale",

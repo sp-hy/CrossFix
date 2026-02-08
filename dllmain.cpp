@@ -142,6 +142,10 @@ DWORD WINAPI MainThread(LPVOID param) {
     ApplyDoubleFpsPatch(base);
   }
 
+  if (settings.GetBool("hide_slow_icon", true)) {
+    ApplyHideSlowIconPatch(base);
+  }
+
   if (settings.GetBool("disable_pause_on_focus_loss", true)) {
     ApplyDisablePausePatch(base);
   } else {
