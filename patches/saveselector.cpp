@@ -1,6 +1,6 @@
 #include "saveselector.h"
-#include "dialog.h"
 #include "../utils/memory.h"
+#include "dialog.h"
 #include <iostream>
 
 // Set at patch time: 24 target addresses (esi is compared against these)
@@ -19,7 +19,8 @@ __declspec(naked) static void SaveSelectorHook() {
     mov edx, [esi]
 
     // Compare esi with each target; jump to the correct value-check for that
-    // group. Group 1: valid 73,107,141,175,209,243,277,311. Group 2: valid 106,140,174,208,242,276,310,344.
+    // group. Group 1: valid 73,107,141,175,209,243,277,311. Group 2: valid
+    // 106,140,174,208,242,276,310,344.
     cmp esi, dword ptr [g_saveSelectorTargets]
     je check_group1
     cmp esi, dword ptr [g_saveSelectorTargets+4]
@@ -110,7 +111,7 @@ __declspec(naked) static void SaveSelectorHook() {
 
   do_division:
     push edx
-    call IsMainMenuOpen
+    call IsGameMenuOpen
     test al, al
     pop edx
     jz cleanup
@@ -126,10 +127,10 @@ __declspec(naked) static void SaveSelectorHook() {
     add esp, 10h
     pop ecx
     pop eax
-    // Overwritten instructions: mov [edi],edx; add edi,4
+         // Overwritten instructions: mov [edi],edx; add edi,4
     mov [edi], edx
     add edi, 4
-    // Return without clobbering eax (game may use it at 2602DE)
+     // Return without clobbering eax (game may use it at 2602DE)
     push dword ptr [g_saveSelectorReturnAddr]
     ret
   }
@@ -141,12 +142,13 @@ bool ApplySaveSelectorPatch(uintptr_t base,
   // Original: mov edx,[esi] (2) + mov [edi],edx (2) + add edi,04 (3) = 7 bytes
   // When esi matches one of the target addresses, we divide the 2-byte value
   // by the aspect ratio multiplier before storing.
-  // Original + new addresses grouped. Group 1: 73,107,141,175,209,243,277,311. Group 2: 106,140,174,208,242,276,310,344
+  // Original + new addresses grouped. Group 1: 73,107,141,175,209,243,277,311.
+  // Group 2: 106,140,174,208,242,276,310,344
   const uintptr_t targetOffsets[] = {
-    0xC1E55C, 0xC1E560, 0xC1E564, 0xC1E568, 0xC1E578, 0xC1E57C,  // original
-    0xC223DC, 0xC223E0, 0xC223E4, 0xC223E8, 0xC223F8, 0xC223FC,  // original
-    0xC1EE1C, 0xC1EE20, 0xC1EE24, 0xC1EE28, 0xC1EE38, 0xC1EE3C,  // new
-    0xC22C9C, 0xC22CA0, 0xC22CA4, 0xC22CA8, 0xC22CB8, 0xC22CBC   // new
+      0xC1E55C, 0xC1E560, 0xC1E564, 0xC1E568, 0xC1E578, 0xC1E57C, // original
+      0xC223DC, 0xC223E0, 0xC223E4, 0xC223E8, 0xC223F8, 0xC223FC, // original
+      0xC1EE1C, 0xC1EE20, 0xC1EE24, 0xC1EE28, 0xC1EE38, 0xC1EE3C, // new
+      0xC22C9C, 0xC22CA0, 0xC22CA4, 0xC22CA8, 0xC22CB8, 0xC22CBC  // new
   };
 
   for (int i = 0; i < 24; i++) {
