@@ -15,6 +15,10 @@ static float g_aspectRatioMultiplier = 1.0f;
 // Menu container width at 1AD4FA – increased with aspect when main menu is open
 static uint32_t g_mainMenuContainerRes = 1280;
 
+// Post-battle stat increase character name offset at CHRONOCROSS.exe+22534
+// (subss xmm3,[2CBB50]). Base 60.0; in battle we use 60*aspectoffset-10.
+static float g_postBattleStatNameOffset = 60.0f;
+
 // Return address for battle UI element position hook (set at patch time)
 static uintptr_t g_battleUIElementPosReturnAddr = 0;
 
@@ -113,6 +117,15 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
     success = false;
   }
 
+  // Post-battle stat increase character name offset at CHRONOCROSS.exe+22534
+  // (subss xmm3,[2CBB50]). We supply 60*aspectoffset-10 in battle, else 60.
+  if (!RedirectOperand(base + 0x22534 + 4, &g_postBattleStatNameOffset)) {
+    std::cout << "Failed to apply battle UI/menu patch: post-battle stat name "
+                 "offset (subss at 22534)"
+              << std::endl;
+    success = false;
+  }
+
   for (const auto &p : operandPatches) {
     if (!RedirectOperand(base + p.offset + p.opcodeLen, &g_baseRes)) {
       std::cout << "Failed to apply battle UI/menu patch: " << p.name
@@ -182,6 +195,14 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 bool IsInBattle() { return ReadGameByte(g_inBattleAddr) == 1; }
 
 void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen) {
+  // Post-battle stat name offset: only scale in battle, else base 60
+  if (aspectRatio < WIDESCREEN_THRESHOLD || !IsInBattle()) {
+    g_postBattleStatNameOffset = 60.0f;
+  } else {
+    float aspectOffset = BASE_ASPECT_RATIO / aspectRatio; // e.g. 0.75 for 16:9
+    g_postBattleStatNameOffset = 60.0f * aspectOffset - 10.0f;
+  }
+
   if (aspectRatio < WIDESCREEN_THRESHOLD) {
     // Reset to 4:3 default
     if (g_baseRes != 1280 || g_aspectRatioMultiplier != 1.0f ||
