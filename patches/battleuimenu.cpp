@@ -252,3 +252,5 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen) {
     }
   }
 }
+
+float *GetAspectRatioMultiplierPtr() { return &g_aspectRatioMultiplier; }

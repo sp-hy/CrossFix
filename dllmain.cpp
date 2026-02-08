@@ -5,6 +5,7 @@
 #include "patches/misc.h"
 #include "patches/modloader.h"
 #include "patches/pausefix.h"
+#include "patches/saveselector.h"
 #include "patches/widescreen.h"
 #include "patches/widescreen2d.h"
 #include "utils/settings.h"
@@ -124,6 +125,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 
     ApplyDialogPatch(base);
     ApplyBattleUIAndMenuPatch(base);
+    ApplySaveSelectorPatch(base, GetAspectRatioMultiplierPtr());
 
     // Always start dynamic monitoring to handle resolution changes
     StartDynamicWidescreenMonitoring(base);
