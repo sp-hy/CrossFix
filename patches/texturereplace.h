@@ -11,3 +11,14 @@ bool TryLoadReplacementTexture(ID3D11Device *pDevice,
 
 // Check if texture replacement is enabled
 bool IsTextureReplacementEnabled();
+
+// Look up replacement by content hash (for PSSetShaderResources path)
+// Returns filepath or empty string if no replacement found
+std::string FindReplacementPath(UINT width, UINT height, uint64_t contentHash);
+
+// Load replacement texture and create SRV for bind-time replacement
+// Used by PSSetShaderResources hook to swap textures at bind time
+bool LoadReplacementSRV(ID3D11Device *pDevice,
+                        const D3D11_TEXTURE2D_DESC *pDesc,
+                        uint64_t contentHash,
+                        ID3D11ShaderResourceView **ppSRV);

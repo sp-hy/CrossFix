@@ -1,4 +1,5 @@
 #include "texturedump.h"
+#include "texturereplace.h"
 #include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "widescreen.h"
@@ -934,6 +935,19 @@ void InitSeenTexturesCS() {
   }
 }
 
+// Replacement SRV cache: original texture ptr -> replacement SRV
+std::unordered_map<void *, ComPtr<ID3D11ShaderResourceView>>
+    g_replacementSRVCache;
+std::unordered_set<void *> g_checkedNoReplacement;
+CRITICAL_SECTION g_replacementCacheCS;
+volatile LONG g_replacementCacheCSInitialized = 0;
+
+void InitReplacementCacheCS() {
+  if (InterlockedCompareExchange(&g_replacementCacheCSInitialized, 1, 0) == 0) {
+    InitializeCriticalSection(&g_replacementCacheCS);
+  }
+}
+
 // Dump a texture from GPU via staging copy + content hash
 void DumpTextureFromGPU(ID3D11DeviceContext *pContext,
                         ID3D11Texture2D *pTexture,
@@ -1055,25 +1069,62 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
   }
 
   bool dumpEnabled = IsTextureDumpEnabled();
+  bool replaceEnabled = IsTextureReplacementEnabled();
 
-  if (dumpEnabled) {
-    for (UINT i = 0; i < NumViews; ++i) {
-      if (!ppShaderResourceViews[i])
+  if (!dumpEnabled && !replaceEnabled) {
+    pOriginal(This, StartSlot, NumViews, ppShaderResourceViews);
+    return;
+  }
+
+  // Prepare modified SRV array for replacement swaps (D3D11 max = 128)
+  ID3D11ShaderResourceView *modSRVs[128];
+  bool anyReplaced = false;
+  UINT safeNumViews = (NumViews <= 128) ? NumViews : 128;
+
+  if (replaceEnabled) {
+    memcpy(modSRVs, ppShaderResourceViews,
+           safeNumViews * sizeof(ID3D11ShaderResourceView *));
+  }
+
+  for (UINT i = 0; i < safeNumViews; ++i) {
+    if (!ppShaderResourceViews[i])
+      continue;
+
+    ID3D11Resource *pResource = nullptr;
+    ppShaderResourceViews[i]->GetResource(&pResource);
+    if (!pResource)
+      continue;
+
+    ID3D11Texture2D *pTexture = nullptr;
+    HRESULT hr = pResource->QueryInterface(__uuidof(ID3D11Texture2D),
+                                           (void **)&pTexture);
+    pResource->Release();
+    if (FAILED(hr) || !pTexture)
+      continue;
+
+    bool needsProcessing = false;
+
+    if (replaceEnabled) {
+      // Fast path: check replacement cache
+      InitReplacementCacheCS();
+      EnterCriticalSection(&g_replacementCacheCS);
+      auto cacheIt = g_replacementSRVCache.find(pTexture);
+      if (cacheIt != g_replacementSRVCache.end()) {
+        modSRVs[i] = cacheIt->second.Get();
+        anyReplaced = true;
+        LeaveCriticalSection(&g_replacementCacheCS);
+        pTexture->Release();
         continue;
+      }
+      bool checked = g_checkedNoReplacement.count(pTexture) > 0;
+      LeaveCriticalSection(&g_replacementCacheCS);
 
-      ID3D11Resource *pResource = nullptr;
-      ppShaderResourceViews[i]->GetResource(&pResource);
-      if (!pResource)
-        continue;
+      if (!checked)
+        needsProcessing = true;
+    }
 
-      ID3D11Texture2D *pTexture = nullptr;
-      HRESULT hr = pResource->QueryInterface(__uuidof(ID3D11Texture2D),
-                                             (void **)&pTexture);
-      pResource->Release();
-      if (FAILED(hr) || !pTexture)
-        continue;
-
-      // Fast pointer-based dedup
+    if (!needsProcessing && dumpEnabled) {
+      // Dump-only pointer dedup
       InitSeenTexturesCS();
       EnterCriticalSection(&g_seenTexturesCS);
       bool seen = g_seenTexturePointers.count(pTexture) > 0;
@@ -1081,24 +1132,189 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
         g_seenTexturePointers.insert(pTexture);
       LeaveCriticalSection(&g_seenTexturesCS);
 
-      if (!seen) {
-        D3D11_TEXTURE2D_DESC desc;
-        pTexture->GetDesc(&desc);
+      if (!seen)
+        needsProcessing = true;
+    }
 
-        if (desc.Width >= 4 && desc.Height >= 4 &&
-            IsDumpableFormat(desc.Format)) {
-          try {
-            DumpTextureFromGPU(This, pTexture, &desc);
-          } catch (...) {
+    if (!needsProcessing) {
+      pTexture->Release();
+      continue;
+    }
+
+    // First encounter - stage, hash, dump, and/or replace
+    D3D11_TEXTURE2D_DESC desc;
+    pTexture->GetDesc(&desc);
+
+    if (desc.Width < 4 || desc.Height < 4 || !IsDumpableFormat(desc.Format)) {
+      if (replaceEnabled) {
+        InitReplacementCacheCS();
+        EnterCriticalSection(&g_replacementCacheCS);
+        g_checkedNoReplacement.insert(pTexture);
+        LeaveCriticalSection(&g_replacementCacheCS);
+      }
+      pTexture->Release();
+      continue;
+    }
+
+    try {
+      ComPtr<ID3D11Device> pDevice;
+      pTexture->GetDevice(&pDevice);
+      if (!pDevice) {
+        pTexture->Release();
+        continue;
+      }
+
+      // Create staging texture (shared for dump + replace)
+      D3D11_TEXTURE2D_DESC stagingDesc = desc;
+      stagingDesc.Usage = D3D11_USAGE_STAGING;
+      stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+      stagingDesc.BindFlags = 0;
+      stagingDesc.MiscFlags = 0;
+      stagingDesc.MipLevels = 1;
+
+      ComPtr<ID3D11Texture2D> pStaging;
+      hr = pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
+      if (FAILED(hr) || !pStaging) {
+        if (replaceEnabled) {
+          InitReplacementCacheCS();
+          EnterCriticalSection(&g_replacementCacheCS);
+          g_checkedNoReplacement.insert(pTexture);
+          LeaveCriticalSection(&g_replacementCacheCS);
+        }
+        pTexture->Release();
+        continue;
+      }
+
+      This->CopySubresourceRegion(pStaging.Get(), 0, 0, 0, 0, pTexture, 0,
+                                  nullptr);
+      This->Flush();
+
+      D3D11_MAPPED_SUBRESOURCE mapped = {};
+      hr = This->Map(pStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+      if (FAILED(hr) || !mapped.pData) {
+        if (replaceEnabled) {
+          InitReplacementCacheCS();
+          EnterCriticalSection(&g_replacementCacheCS);
+          g_checkedNoReplacement.insert(pTexture);
+          LeaveCriticalSection(&g_replacementCacheCS);
+        }
+        pTexture->Release();
+        continue;
+      }
+
+      // Content hash from GPU data
+      uint64_t hash = HashTextureData(&desc, mapped.pData, mapped.RowPitch);
+
+      // Dump if enabled
+      if (dumpEnabled) {
+        InitDumpCS();
+        EnterCriticalSection(&g_dumpCS);
+        bool alreadyDumped = g_recentDumps.count(hash) > 0;
+        if (!alreadyDumped) {
+          if (g_recentDumps.size() > 10000)
+            g_recentDumps.clear();
+          g_recentDumps.insert(hash);
+        }
+        LeaveCriticalSection(&g_dumpCS);
+
+        if (!alreadyDumped) {
+          std::ostringstream filename;
+          filename << std::dec << desc.Width << "x" << desc.Height << "_"
+                   << std::hex << std::setfill('0') << std::setw(16) << hash
+                   << ".dds";
+          std::string filenameStr = filename.str();
+
+          // Check if already on disk
+          bool onDisk = false;
+          std::string foldersToCheck[] = {
+              "BGRA4",        "BGRA8",         "RGBA8",
+              "BC1_DXT1",     "BC2_DXT3",      "BC3_DXT5",
+              "BC7",          "transparent",   "rendertargets",
+              "other"};
+          for (const auto &folder : foldersToCheck) {
+            std::string checkPath =
+                g_dumpPath + "\\" + folder + "\\" + filenameStr;
+            if (GetFileAttributesA(checkPath.c_str()) !=
+                INVALID_FILE_ATTRIBUTES) {
+              onDisk = true;
+              break;
+            }
+          }
+
+          if (!onDisk) {
+            bool isRT =
+                (desc.BindFlags & D3D11_BIND_RENDER_TARGET) != 0;
+            bool isTransparent = IsFullyTransparent(
+                mapped.pData, desc.Width, desc.Height, mapped.RowPitch,
+                desc.Format);
+
+            std::string folder;
+            if (isRT)
+              folder =
+                  isTransparent ? "rendertargets\\transparent" : "rendertargets";
+            else if (isTransparent)
+              folder = "transparent";
+            else
+              folder = GetFormatFolderName(desc.Format);
+
+            std::string filepath =
+                g_dumpPath + "\\" + folder + "\\" + filenameStr;
+
+            D3D11_TEXTURE2D_DESC writeDesc = desc;
+            writeDesc.MipLevels = 1;
+
+            D3D11_SUBRESOURCE_DATA tempData = {};
+            tempData.pSysMem = mapped.pData;
+            tempData.SysMemPitch = mapped.RowPitch;
+
+            bool unused = false;
+            if (SaveDDSFromInitialData(&writeDesc, &tempData, filepath,
+                                       &unused)) {
+              std::cout << "Dumped" << (isRT ? " RT" : "") << ": "
+                        << desc.Width << "x" << desc.Height << " "
+                        << filenameStr << std::endl;
+            }
           }
         }
       }
 
-      pTexture->Release();
+      // Try replacement if enabled
+      if (replaceEnabled) {
+        ComPtr<ID3D11ShaderResourceView> pReplaceSRV;
+        if (LoadReplacementSRV(pDevice.Get(), &desc, hash,
+                               pReplaceSRV.GetAddressOf())) {
+          InitReplacementCacheCS();
+          EnterCriticalSection(&g_replacementCacheCS);
+          g_replacementSRVCache[pTexture] = pReplaceSRV;
+          LeaveCriticalSection(&g_replacementCacheCS);
+          modSRVs[i] = pReplaceSRV.Get();
+          anyReplaced = true;
+        } else {
+          InitReplacementCacheCS();
+          EnterCriticalSection(&g_replacementCacheCS);
+          g_checkedNoReplacement.insert(pTexture);
+          LeaveCriticalSection(&g_replacementCacheCS);
+        }
+      }
+
+      This->Unmap(pStaging.Get(), 0);
+    } catch (...) {
+      if (replaceEnabled) {
+        InitReplacementCacheCS();
+        EnterCriticalSection(&g_replacementCacheCS);
+        g_checkedNoReplacement.insert(pTexture);
+        LeaveCriticalSection(&g_replacementCacheCS);
+      }
     }
+
+    pTexture->Release();
   }
 
-  pOriginal(This, StartSlot, NumViews, ppShaderResourceViews);
+  if (replaceEnabled && anyReplaced) {
+    pOriginal(This, StartSlot, safeNumViews, modSRVs);
+  } else {
+    pOriginal(This, StartSlot, NumViews, ppShaderResourceViews);
+  }
 }
 } // namespace
 

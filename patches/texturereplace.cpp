@@ -11,7 +11,10 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <wincodec.h>
 #include <wrl/client.h>
+
+#pragma comment(lib, "windowscodecs.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -51,26 +54,36 @@ void InitializeModsPath() {
   CreateDirectoryA(g_modsPath.c_str(), NULL);
 }
 
-// Parse "WxH_<16hex>.dds" filename. Returns true and sets outW, outH, outHash on success.
-bool ParseReplacementFilename(const std::string &filename, UINT *outW, UINT *outH,
-                              uint64_t *outHash) {
+// Parse "WxH_<16hex>.dds" or "WxH_<16hex>.png" filename.
+bool ParseReplacementFilename(const std::string &filename, UINT *outW,
+                              UINT *outH, uint64_t *outHash) {
   unsigned int w = 0, h = 0;
   if (sscanf_s(filename.c_str(), "%ux%u_", &w, &h) != 2)
     return false;
   if (w == 0 || h == 0)
     return false;
   size_t pos = filename.find('_');
-  if (pos == std::string::npos || filename.size() < pos + 17 ||
-      filename.compare(filename.size() - 4, 4, ".dds") != 0)
+  if (pos == std::string::npos || filename.size() < pos + 17)
+    return false;
+  // Accept .dds or .png extension
+  bool isDds = filename.size() >= 4 &&
+               filename.compare(filename.size() - 4, 4, ".dds") == 0;
+  bool isPng = filename.size() >= 4 &&
+               filename.compare(filename.size() - 4, 4, ".png") == 0;
+  if (!isDds && !isPng)
     return false;
   const char *hex = filename.c_str() + pos + 1;
   uint64_t hash = 0;
   for (int i = 0; i < 16 && hex[i]; i++) {
     int nibble = 0;
-    if (hex[i] >= '0' && hex[i] <= '9') nibble = hex[i] - '0';
-    else if (hex[i] >= 'a' && hex[i] <= 'f') nibble = hex[i] - 'a' + 10;
-    else if (hex[i] >= 'A' && hex[i] <= 'F') nibble = hex[i] - 'A' + 10;
-    else return false;
+    if (hex[i] >= '0' && hex[i] <= '9')
+      nibble = hex[i] - '0';
+    else if (hex[i] >= 'a' && hex[i] <= 'f')
+      nibble = hex[i] - 'a' + 10;
+    else if (hex[i] >= 'A' && hex[i] <= 'F')
+      nibble = hex[i] - 'A' + 10;
+    else
+      return false;
     hash = (hash << 4) | nibble;
   }
   *outW = w;
@@ -79,14 +92,10 @@ bool ParseReplacementFilename(const std::string &filename, UINT *outW, UINT *out
   return true;
 }
 
-void BuildReplacementCache() {
-  if (g_cacheBuilt || g_modsPath.empty())
-    return;
-  g_cacheBuilt = true;
-  std::string searchPath = g_modsPath + "\\*.dds";
+void ScanReplacementFiles(const std::string &pattern) {
   WIN32_FIND_DATAA fd;
-  HANDLE h = FindFirstFileA(searchPath.c_str(), &fd);
-  if (h == INVALID_HANDLE_VALUE)
+  HANDLE hFind = FindFirstFileA(pattern.c_str(), &fd);
+  if (hFind == INVALID_HANDLE_VALUE)
     return;
   do {
     if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -96,10 +105,17 @@ void BuildReplacementCache() {
     if (ParseReplacementFilename(fd.cFileName, &w, &h, &hash)) {
       std::string fullPath = g_modsPath + "\\" + fd.cFileName;
       g_replacementByHash[{w, h, hash}] = fullPath;
-      g_replacementBySize[{w, h}].push_back(fullPath);
     }
-  } while (FindNextFileA(h, &fd));
-  FindClose(h);
+  } while (FindNextFileA(hFind, &fd));
+  FindClose(hFind);
+}
+
+void BuildReplacementCache() {
+  if (g_cacheBuilt || g_modsPath.empty())
+    return;
+  g_cacheBuilt = true;
+  ScanReplacementFiles(g_modsPath + "\\*.dds");
+  ScanReplacementFiles(g_modsPath + "\\*.png");
   std::cout << "Texture replacement cache: " << g_replacementByHash.size()
             << " file(s) in mods/textures" << std::endl;
 }
@@ -256,6 +272,125 @@ bool LoadDDSTexture(ID3D11Device *pDevice, const std::string &filepath,
   return true;
 }
 
+// Load PNG via Windows Imaging Component (WIC)
+// Supports BGRA8 and RGBA8 original formats
+bool LoadPNGTexture(ID3D11Device *pDevice, const std::string &filepath,
+                    const D3D11_TEXTURE2D_DESC *pOriginalDesc,
+                    ID3D11Texture2D **ppTexture2D) {
+  DXGI_FORMAT format = pOriginalDesc->Format;
+  bool isBGRA = (format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+                 format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+  bool isRGBA = (format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                 format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+
+  if (!isBGRA && !isRGBA) {
+    std::cout << "PNG replacement skipped - unsupported format "
+              << static_cast<unsigned>(format) << " for " << filepath
+              << std::endl;
+    return false;
+  }
+
+  // Convert path to wide string for WIC
+  int wlen = MultiByteToWideChar(CP_ACP, 0, filepath.c_str(), -1, nullptr, 0);
+  if (wlen <= 0)
+    return false;
+  std::vector<wchar_t> wpath(wlen);
+  MultiByteToWideChar(CP_ACP, 0, filepath.c_str(), -1, wpath.data(), wlen);
+
+  HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+  ComPtr<IWICImagingFactory> pFactory;
+  HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory));
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  ComPtr<IWICBitmapDecoder> pDecoder;
+  hr = pFactory->CreateDecoderFromFilename(
+      wpath.data(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad,
+      &pDecoder);
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  ComPtr<IWICBitmapFrameDecode> pFrame;
+  hr = pDecoder->GetFrame(0, &pFrame);
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  UINT width, height;
+  pFrame->GetSize(&width, &height);
+
+  if (width != pOriginalDesc->Width || height != pOriginalDesc->Height) {
+    std::cout << "PNG replacement size mismatch: expected "
+              << pOriginalDesc->Width << "x" << pOriginalDesc->Height
+              << ", got " << width << "x" << height << std::endl;
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  // Convert to matching pixel format
+  GUID targetWicFormat =
+      isBGRA ? GUID_WICPixelFormat32bppBGRA : GUID_WICPixelFormat32bppRGBA;
+
+  ComPtr<IWICFormatConverter> pConverter;
+  hr = pFactory->CreateFormatConverter(&pConverter);
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  hr = pConverter->Initialize(pFrame.Get(), targetWicFormat,
+                              WICBitmapDitherTypeNone, nullptr, 0.0,
+                              WICBitmapPaletteTypeCustom);
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  UINT rowPitch = width * 4;
+  UINT imageSize = rowPitch * height;
+  std::vector<uint8_t> pixels(imageSize);
+
+  hr = pConverter->CopyPixels(nullptr, rowPitch, imageSize, pixels.data());
+  if (FAILED(hr)) {
+    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+      CoUninitialize();
+    return false;
+  }
+
+  if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
+    CoUninitialize();
+
+  // Create texture
+  D3D11_TEXTURE2D_DESC createDesc = *pOriginalDesc;
+  createDesc.MipLevels = 1;
+
+  D3D11_SUBRESOURCE_DATA initData = {};
+  initData.pSysMem = pixels.data();
+  initData.SysMemPitch = rowPitch;
+
+  hr = pDevice->CreateTexture2D(&createDesc, &initData, ppTexture2D);
+  if (FAILED(hr)) {
+    std::cout << "Failed to create PNG replacement texture from " << filepath
+              << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
 bool IsReplacementFormatSupported(DXGI_FORMAT format) {
   switch (format) {
   case DXGI_FORMAT_R8G8B8A8_UNORM:
@@ -314,41 +449,98 @@ bool TryLoadReplacementTexture(ID3D11Device *pDevice,
   UINT w = pDesc->Width, h = pDesc->Height;
   uint64_t hash = HashTexture(pDesc, pInitialData);
 
-  // 1) Exact lookup from preloaded cache
+  // Exact lookup from preloaded cache
   auto it = g_replacementByHash.find({w, h, hash});
   if (it != g_replacementByHash.end()) {
     const std::string &filepath = it->second;
-    if (LoadDDSTexture(pDevice, filepath, pDesc, ppTexture2D)) {
+    if (g_failedReplacementFiles.count(filepath))
+      return false;
+
+    bool loaded = false;
+    // Choose loader by file extension
+    if (filepath.size() >= 4 &&
+        filepath.compare(filepath.size() - 4, 4, ".png") == 0) {
+      loaded = LoadPNGTexture(pDevice, filepath, pDesc, ppTexture2D);
+    } else {
+      loaded = LoadDDSTexture(pDevice, filepath, pDesc, ppTexture2D);
+    }
+
+    if (loaded) {
       size_t nameStart = filepath.find_last_of("\\/");
       std::string name = (nameStart != std::string::npos)
                              ? filepath.substr(nameStart + 1)
                              : filepath;
-      std::cout << "Replaced texture (exact hash): " << name << std::endl;
+      std::cout << "Replaced texture: " << name << std::endl;
       return true;
     }
     g_failedReplacementFiles.insert(filepath);
   }
 
-  // 2) For render targets (null pInitialData), try every WxH_*.dds in cache
-  //    until one loads. Skip files that already failed this session.
-  if (!pInitialData) {
-    auto sizeIt = g_replacementBySize.find({w, h});
-    if (sizeIt != g_replacementBySize.end()) {
-      for (const std::string &filepath : sizeIt->second) {
-        if (g_failedReplacementFiles.count(filepath))
-          continue;
-        if (LoadDDSTexture(pDevice, filepath, pDesc, ppTexture2D)) {
-          size_t nameStart = filepath.find_last_of("\\/");
-          std::string name = (nameStart != std::string::npos)
-                                 ? filepath.substr(nameStart + 1)
-                                 : filepath;
-          std::cout << "Replaced texture (size fallback): " << name << std::endl;
-          return true;
-        }
-        g_failedReplacementFiles.insert(filepath);
-      }
-    }
+  return false;
+}
+
+std::string FindReplacementPath(UINT width, UINT height,
+                                uint64_t contentHash) {
+  if (!IsTextureReplacementEnabled())
+    return "";
+  auto it = g_replacementByHash.find({width, height, contentHash});
+  if (it != g_replacementByHash.end()) {
+    if (!g_failedReplacementFiles.count(it->second))
+      return it->second;
+  }
+  return "";
+}
+
+bool LoadReplacementSRV(ID3D11Device *pDevice,
+                        const D3D11_TEXTURE2D_DESC *pDesc,
+                        uint64_t contentHash,
+                        ID3D11ShaderResourceView **ppSRV) {
+  if (!pDevice || !pDesc || !ppSRV)
+    return false;
+  *ppSRV = nullptr;
+
+  std::string path =
+      FindReplacementPath(pDesc->Width, pDesc->Height, contentHash);
+  if (path.empty())
+    return false;
+
+  D3D11_TEXTURE2D_DESC createDesc = *pDesc;
+  createDesc.MipLevels = 1;
+
+  ComPtr<ID3D11Texture2D> pReplaceTex;
+  bool loaded = false;
+
+  if (path.size() >= 4 &&
+      path.compare(path.size() - 4, 4, ".png") == 0) {
+    loaded = LoadPNGTexture(pDevice, path, &createDesc,
+                            pReplaceTex.GetAddressOf());
+  } else {
+    loaded = LoadDDSTexture(pDevice, path, &createDesc,
+                            pReplaceTex.GetAddressOf());
   }
 
-  return false;
+  if (!loaded || !pReplaceTex) {
+    g_failedReplacementFiles.insert(path);
+    return false;
+  }
+
+  D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+  srvDesc.Format = pDesc->Format;
+  srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+  srvDesc.Texture2D.MostDetailedMip = 0;
+  srvDesc.Texture2D.MipLevels = 1;
+
+  HRESULT hr =
+      pDevice->CreateShaderResourceView(pReplaceTex.Get(), &srvDesc, ppSRV);
+  if (FAILED(hr)) {
+    g_failedReplacementFiles.insert(path);
+    return false;
+  }
+
+  size_t nameStart = path.find_last_of("\\/");
+  std::string name = (nameStart != std::string::npos)
+                         ? path.substr(nameStart + 1)
+                         : path;
+  std::cout << "Replaced texture (bind-time): " << name << std::endl;
+  return true;
 }
