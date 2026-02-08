@@ -16,10 +16,14 @@ static float g_lastCursorXScaled = 0.0f;
 
 // Memory addresses
 static uintptr_t g_cursorWidthAddr = 0;
+// Main menu flag: when true, dialog patches are disabled (values reset to 4:3).
+// Set to same as game menu below if no separate main-menu address is known.
 static uintptr_t g_mainMenuOpenAddr = 0;
+// Game menu flag: byte at base+0x82F120 is 1 when in-game menu is open.
+static uintptr_t g_gameMenuOpenAddr = 0;
 
-// Check if the main menu is currently open
-bool IsMainMenuOpen() { return ReadGameByte(g_mainMenuOpenAddr) == 1; }
+bool IsMainMenuOpen() { return g_mainMenuOpenAddr && ReadGameByte(g_mainMenuOpenAddr) == 1; }
+bool IsGameMenuOpen() { return g_gameMenuOpenAddr && ReadGameByte(g_gameMenuOpenAddr) == 1; }
 
 // Helper function called by the hook to scale values only if they've changed
 // We track the ORIGINAL unscaled values and only scale if the value has changed
@@ -123,6 +127,8 @@ extern "C" __declspec(naked) void CursorPosDialogWidthHook() {
 
 bool ApplyDialogPatch(uintptr_t base) {
   g_cursorWidthAddr = base + 0x415F8;
+  g_gameMenuOpenAddr = base + 0x82F120;
+  // Main menu: use same address as game menu unless a separate main-menu flag is found
   g_mainMenuOpenAddr = base + 0x82F120;
   bool success = true;
 
@@ -185,9 +191,10 @@ bool ApplyDialogPatch(uintptr_t base) {
 }
 
 void UpdateDialogValues(float aspectRatio, bool isInBattle) {
-  bool isMenuOpen = IsMainMenuOpen();
+  bool mainMenuOpen = IsMainMenuOpen();
 
-  if (aspectRatio < WIDESCREEN_THRESHOLD || isMenuOpen) {
+  // Disable dialog patches when main menu is open or in 4:3
+  if (aspectRatio < WIDESCREEN_THRESHOLD || mainMenuOpen) {
     // Reset to 4:3 defaults
     if (g_xScale != 1.0f || g_letterSpacing != 0.45f ||
         g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {

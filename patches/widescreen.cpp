@@ -269,7 +269,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
       UpdateDialogValues(g_lastAspectRatio, IsInBattle());
 
       // Update battle UI and menu values based on aspect ratio
-      UpdateBattleUIAndMenuValues(g_lastAspectRatio, IsMainMenuOpen());
+      UpdateBattleUIAndMenuValues(g_lastAspectRatio, IsGameMenuOpen());
     } catch (...) {
       // Ignore errors and continue monitoring
     }

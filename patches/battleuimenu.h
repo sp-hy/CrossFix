@@ -9,7 +9,7 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base);
 bool IsInBattle();
 
 // Update battle UI and menu aspect ratio values
-void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen);
+void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen);
 
 // Pointer to aspect ratio multiplier (for save selector and other patches that
 // need to read it from generated code)

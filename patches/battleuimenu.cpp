@@ -13,7 +13,7 @@ static uint32_t g_baseRes = 1280; // Base 1280 for 4:3
 static float g_aspectRatioMultiplier = 1.0f;
 
 // Menu container width at 1AD4FA – increased with aspect when main menu is open
-static uint32_t g_mainMenuContainerRes = 1280;
+static uint32_t g_gameMenuContainerRes = 1280;
 
 // Post-battle stat increase character name offset at CHRONOCROSS.exe+22534
 // (subss xmm3,[2CBB50]). Base 60.0; in battle we use 60*aspectoffset-10.
@@ -110,7 +110,7 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 
   // Menu container width at CHRONOCROSS.exe+1AD4FA (movd xmm0,[...]) –
   // increased with aspect, only effective when main menu is open
-  if (!RedirectOperand(base + 0x1AD4FA + 4, &g_mainMenuContainerRes)) {
+  if (!RedirectOperand(base + 0x1AD4FA + 4, &g_gameMenuContainerRes)) {
     std::cout << "Failed to apply battle UI/menu patch: menu containers (movd "
                  "xmm0 at 1AD4FA)"
               << std::endl;
@@ -194,7 +194,7 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
 
 bool IsInBattle() { return ReadGameByte(g_inBattleAddr) == 1; }
 
-void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen) {
+void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
   // Post-battle stat name offset: only scale in battle, else base 60
   if (aspectRatio < WIDESCREEN_THRESHOLD || !IsInBattle()) {
     g_postBattleStatNameOffset = 60.0f;
@@ -206,11 +206,11 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen) {
   if (aspectRatio < WIDESCREEN_THRESHOLD) {
     // Reset to 4:3 default
     if (g_baseRes != 1280 || g_aspectRatioMultiplier != 1.0f ||
-        g_mainMenuContainerRes != 1280) {
+        g_gameMenuContainerRes != 1280) {
       g_baseRes = 1280;
       g_aspectRatioMultiplier = 1.0f;
       g_battleDialogCursorAddend = 30; // 30 * 1.0
-      g_mainMenuContainerRes = 1280;
+      g_gameMenuContainerRes = 1280;
 #ifdef _DEBUG
       std::cout << "Battle UI/Menu baseRes restored to default (4:3): 1280, "
                    "aspect multiplier: 1.0"
@@ -231,19 +231,19 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen) {
     int32_t newCursorAddend = (int32_t)(30.0f * newAspectMultiplier + 0.5f);
 
     // Menu container at 1AD4FA: increase with aspect, only when main menu open
-    uint32_t newMainMenuContainerRes =
-        isMainMenuOpen
+    uint32_t newGameMenuContainerRes =
+        isGameMenuOpen
             ? (uint32_t)(1280.0f * (aspectRatio / BASE_ASPECT_RATIO) + 0.5f)
             : 1280;
 
     if (g_baseRes != newBaseRes ||
         g_aspectRatioMultiplier != newAspectMultiplier ||
         g_battleDialogCursorAddend != newCursorAddend ||
-        g_mainMenuContainerRes != newMainMenuContainerRes) {
+        g_gameMenuContainerRes != newGameMenuContainerRes) {
       g_baseRes = newBaseRes;
       g_aspectRatioMultiplier = newAspectMultiplier;
       g_battleDialogCursorAddend = newCursorAddend;
-      g_mainMenuContainerRes = newMainMenuContainerRes;
+      g_gameMenuContainerRes = newGameMenuContainerRes;
 #ifdef _DEBUG
       std::cout << "Battle UI/Menu baseRes updated: " << g_baseRes
                 << ", aspect multiplier: " << g_aspectRatioMultiplier
