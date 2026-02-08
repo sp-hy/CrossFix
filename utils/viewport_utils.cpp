@@ -19,13 +19,16 @@ UINT CopyViewportsToBuffer(D3D11_VIEWPORT *outBuffer, UINT bufferSize,
   return count;
 }
 
+// Sentinel value: use -1 for any field to match any value (wildcard)
+constexpr float WILDCARD = -1.0f;
+
 // Viewport definition for matching and transforming specific UI elements
 struct ViewportDefinition {
   float baseX;     // Base X position for repositioning (normalized, <1280)
   float originalX; // Original X position (can be >1280, -1 means same as baseX)
-  float y;         // Y coordinate to match
-  float width;     // Width to match (original unscaled width)
-  float height;    // Height to match
+  float y;         // Y coordinate to match (WILDCARD = any)
+  float width;     // Width to match (WILDCARD = any, e.g. loading bars)
+  float height;    // Height to match (WILDCARD = any)
   float epsilon;   // Tolerance for matching
 };
 
@@ -77,6 +80,9 @@ void ApplyStaminaBarWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
       // Menu Customise Selectors
       {1108.0f, 2388.0f, 232.0f, 720.0f, 752.0f, 1.0f},
 
+      // Loading Bar (width varies by progress - use wildcard)
+      {896.0f, 2176.0f, 992.0f, WILDCARD, 32.0f, 1.0f},
+
       // Add more viewport definitions here as needed:
       // { BaseX, OriginalX, Y, Width, Height, Epsilon },
 
@@ -92,11 +98,17 @@ void ApplyStaminaBarWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
       const ViewportDefinition &def = definitions[d];
 
       // Check if viewport matches this definition
-      // Match on Width, Y, and Height first
-      bool dimensionsMatch =
-          (std::abs(viewports[i].Width - def.width) < 0.1f &&
-           std::abs(viewports[i].TopLeftY - def.y) < def.epsilon &&
-           std::abs(viewports[i].Height - def.height) < def.epsilon);
+      // Match on Width, Y, and Height (WILDCARD = -1 skips that field)
+      bool widthMatch =
+          (def.width < 0) ||
+          (std::abs(viewports[i].Width - def.width) < 0.1f);
+      bool yMatch =
+          (def.y < 0) ||
+          (std::abs(viewports[i].TopLeftY - def.y) < def.epsilon);
+      bool heightMatch =
+          (def.height < 0) ||
+          (std::abs(viewports[i].Height - def.height) < def.epsilon);
+      bool dimensionsMatch = widthMatch && yMatch && heightMatch;
 
       if (!dimensionsMatch)
         continue;
