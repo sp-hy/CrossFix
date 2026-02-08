@@ -6,6 +6,7 @@
 #include "../utils/settings.h"
 #include "../utils/viewport_utils.h"
 #include "texturedump.h"
+#include "texturereplace.h"
 #include "widescreen.h"
 #include <Windows.h>
 #include <algorithm>
@@ -228,6 +229,18 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
     return E_FAIL;
   if (!g_createTextureHookReady)
     return pOriginal(This, pDesc, pInitialData, ppTexture2D);
+
+  // Check for texture replacement first
+  if (pDesc && ppTexture2D && TryLoadReplacementTexture(This, pDesc, pInitialData, ppTexture2D)) {
+    // Replacement texture loaded successfully, dump it if enabled
+    ID3D11DeviceContext *pContext = nullptr;
+    This->GetImmediateContext(&pContext);
+    if (pContext) {
+      DumpTexture2D(This, pContext, *ppTexture2D, pDesc, pInitialData);
+      pContext->Release();
+    }
+    return S_OK;
+  }
 
   HRESULT hr;
   const D3D11_TEXTURE2D_DESC *actualDesc = pDesc;

@@ -1,5 +1,6 @@
 #include "d3d11_proxy.h"
 #include "../patches/staminabarfix.h"
+#include "../patches/texturedump.h"
 #include "../patches/textureresize.h"
 #include "../patches/sampleroverride.h"
 #include "../patches/upscale4k.h"
@@ -108,6 +109,16 @@ static DWORD SafeApplyStaminaBarFixPatch(ID3D11Device *pDevice,
   }
 }
 
+static DWORD SafeApplyTextureDumpHooks(ID3D11Device *pDevice,
+                                       ID3D11DeviceContext *pContext) {
+  __try {
+    ApplyTextureDumpHooks(pDevice, pContext);
+    return 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return GetExceptionCode();
+  }
+}
+
 // Apply all hooks with SEH protection
 static void ApplyHooksWithProtection(ID3D11Device *pDevice,
                                      ID3D11DeviceContext *pContext) {
@@ -141,6 +152,13 @@ static void ApplyHooksWithProtection(ID3D11Device *pDevice,
   exCode = SafeApplyUpscale4KPatch(pDevice, pContext);
   if (exCode != 0) {
     std::cout << "Warning: Upscale hooks failed (0x" << std::hex << exCode
+              << std::dec << "), continuing without them" << std::endl;
+  }
+
+  // Apply texture dump/replace hooks (PSSetShaderResources)
+  exCode = SafeApplyTextureDumpHooks(pDevice, pContext);
+  if (exCode != 0) {
+    std::cout << "Warning: Texture dump hooks failed (0x" << std::hex << exCode
               << std::dec << "), continuing without them" << std::endl;
   }
 }

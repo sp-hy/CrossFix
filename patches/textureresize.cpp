@@ -2,6 +2,7 @@
 #include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "texturedump.h"
+#include "texturereplace.h"
 #include "widescreen.h"
 #include <Windows.h>
 #include <algorithm>
@@ -17,6 +18,7 @@ typedef HRESULT(STDMETHODCALLTYPE *CreateTexture2D_t)(
 volatile CreateTexture2D_t Original_CreateTexture2D_Resize = nullptr;
 volatile LONG g_resizeHooksApplied = 0;
 volatile LONG g_resizeHooksReady = 0;
+volatile LONG g_widescreenResizeActive = 0; // Only resize textures when widescreen is on
 
 // Static buffer pool
 CRITICAL_SECTION g_bufferPoolCS;
@@ -299,9 +301,23 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D_Resize(
   if (!g_resizeHooksReady)
     return pOriginal(This, pDesc, pInitialData, ppTexture2D);
 
+  // Check for texture replacement first
+  if (pDesc && ppTexture2D && TryLoadReplacementTexture(This, pDesc, pInitialData, ppTexture2D)) {
+    // Replacement texture loaded successfully, dump it if enabled
+    if (SUCCEEDED(S_OK)) {
+      ID3D11DeviceContext *pContext = nullptr;
+      This->GetImmediateContext(&pContext);
+      if (pContext) {
+        DumpTexture2D(This, pContext, *ppTexture2D, pDesc, pInitialData);
+        pContext->Release();
+      }
+    }
+    return S_OK;
+  }
+
   HRESULT hr;
 
-  if (pDesc && pInitialData && ShouldResizeTexture(pDesc, pInitialData)) {
+  if (g_widescreenResizeActive && pDesc && pInitialData && ShouldResizeTexture(pDesc, pInitialData)) {
     float widescreenRatio = GetCurrentWidescreenRatio();
 
     if (widescreenRatio >= 0.99f && widescreenRatio <= 1.01f) {
@@ -375,10 +391,15 @@ void ApplyTextureResizeHooks(ID3D11Device *pDevice) {
 
   bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
   bool textureDumpEnabled = settings.GetBool("texture_dump_enabled", false);
-  bool enabled = widescreenEnabled && !textureDumpEnabled;
+  bool textureReplaceEnabled = settings.GetBool("texture_replace_enabled", false);
+  bool enabled = widescreenEnabled || textureDumpEnabled || textureReplaceEnabled;
 
   if (!enabled)
     return;
+
+  // Only do widescreen resizing when widescreen is active and not in dump-only mode
+  if (widescreenEnabled && !textureDumpEnabled)
+    InterlockedExchange(&g_widescreenResizeActive, 1);
 
   void **deviceVtable = *(void ***)pDevice;
   if (!deviceVtable)
