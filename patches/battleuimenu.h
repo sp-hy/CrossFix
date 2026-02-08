@@ -9,4 +9,4 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base);
 bool IsInBattle();
 
 // Update battle UI and menu aspect ratio values
-void UpdateBattleUIAndMenuValues(float aspectRatio);
+void UpdateBattleUIAndMenuValues(float aspectRatio, bool isMainMenuOpen);

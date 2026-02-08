@@ -19,9 +19,7 @@ static uintptr_t g_cursorWidthAddr = 0;
 static uintptr_t g_mainMenuOpenAddr = 0;
 
 // Check if the main menu is currently open
-bool IsMainMenuOpen() {
-  return ReadGameByte(g_mainMenuOpenAddr) == 1;
-}
+bool IsMainMenuOpen() { return ReadGameByte(g_mainMenuOpenAddr) == 1; }
 
 // Helper function called by the hook to scale values only if they've changed
 // We track the ORIGINAL unscaled values and only scale if the value has changed
@@ -125,7 +123,7 @@ extern "C" __declspec(naked) void CursorPosDialogWidthHook() {
 
 bool ApplyDialogPatch(uintptr_t base) {
   g_cursorWidthAddr = base + 0x415F8;
-  g_mainMenuOpenAddr = base + 0x18B2C5D;
+  g_mainMenuOpenAddr = base + 0x82F120;
   bool success = true;
 
   // ============================================================
@@ -173,7 +171,8 @@ bool ApplyDialogPatch(uintptr_t base) {
   g_cursorPosCursorXOffset = (uint32_t)(base + 0x1089E14);
   g_cursorPosReturnAddr = cursorPosHookAddr + 8; // After the 8-byte instruction
 
-  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosDialogWidthHook, 8)) {
+  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosDialogWidthHook,
+                      8)) {
     std::cout << "Failed to apply cursor position hook" << std::endl;
     success = false;
   }
