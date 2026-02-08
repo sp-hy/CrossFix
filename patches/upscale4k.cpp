@@ -354,10 +354,9 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
                       (volatile void **)&Original_RSSetViewports,
                       &g_viewportsHookReady);
 
-    InstallVtableHook(contextVtable, 50, 46,
-                      (void *)Hooked_CopySubresourceRegion,
-                      (volatile void **)&Original_CopySubresourceRegion,
-                      &g_copyHookReady);
+    InstallVtableHook(
+        contextVtable, 50, 46, (void *)Hooked_CopySubresourceRegion,
+        (volatile void **)&Original_CopySubresourceRegion, &g_copyHookReady);
 
     InstallVtableHook(deviceVtable, 10, 5, (void *)Hooked_CreateTexture2D,
                       (volatile void **)&Original_CreateTexture2D,

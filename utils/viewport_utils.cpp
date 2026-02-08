@@ -74,8 +74,12 @@ void ApplyStaminaBarWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
       {144.0f, 1424.0f, 672.0f, 104.0f, 144.0f,
        1.0f}, // 144 + 1280 = 1424 Left wide bar
 
+      // Menu Customise Selectors
+      {1108.0f, 2388.0f, 232.0f, 720.0f, 752.0f, 1.0f},
+
       // Add more viewport definitions here as needed:
       // { BaseX, OriginalX, Y, Width, Height, Epsilon },
+
   };
 
   const int numDefinitions = sizeof(definitions) / sizeof(definitions[0]);
