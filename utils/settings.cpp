@@ -269,6 +269,11 @@ bool Settings::SaveDefault(const std::string &filename) {
        << std::endl;
   file << "# 0 = disabled, 1 = enabled" << std::endl;
   file << "texture_dump_enabled=0" << std::endl << std::endl;
+  file << "# Enable texture replacement from mods/textures (replacement "
+          ".png/dds by hash)"
+       << std::endl;
+  file << "# 0 = disabled, 1 = enabled" << std::endl;
+  file << "texture_replace_enabled=0" << std::endl << std::endl;
   file << "upscale_setup_completed=0" << std::endl;
   file
       << "# Force camera boundaries in rooms that might otherwise override them"
@@ -306,15 +311,10 @@ bool Settings::HasKey(const std::string &key) const {
 }
 
 std::vector<std::string> Settings::GetRequiredKeys() {
-  return {"widescreen_enabled",
-          "double_fps_mode",
-          "hide_slow_icon",
-          "disable_pause_on_focus_loss",
-          "upscale_enabled",
-          "upscale_scale",
-          "texture_dump_enabled",
-          "upscale_setup_completed",
-          "boundary_overrides",
-          "mod_loader_enabled",
-          "sampler_force_point"};
+  return {"widescreen_enabled",      "double_fps_mode",
+          "hide_slow_icon",          "disable_pause_on_focus_loss",
+          "upscale_enabled",         "upscale_scale",
+          "texture_dump_enabled",    "texture_replace_enabled",
+          "upscale_setup_completed", "boundary_overrides",
+          "mod_loader_enabled",      "sampler_force_point"};
 }

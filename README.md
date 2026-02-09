@@ -67,6 +67,9 @@ mod_loader_enabled=0
 # Disables texture resizing when enabled
 texture_dump_enabled=0
 
+# Texture replacement from mods/dump (replacement .png by hash)
+texture_replace_enabled=0
+
 # Force POINT texture filtering (fixes lines around overlay textures when upscaling)
 sampler_force_point=0
 ```
