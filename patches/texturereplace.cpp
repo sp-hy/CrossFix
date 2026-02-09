@@ -424,6 +424,13 @@ bool IsTextureReplacementEnabled() {
 
   Settings settings;
   settings.Load(Settings::GetSettingsPath());
+
+  // Dump mode: disable replacement (dump needs unmodified textures)
+  if (settings.GetBool("texture_dump_enabled", false)) {
+    g_textureReplaceEnabled = false;
+    return false;
+  }
+
   g_textureReplaceEnabled =
       settings.GetBool("texture_replace_enabled", false);
 

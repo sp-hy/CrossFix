@@ -83,8 +83,10 @@ DWORD WINAPI MainThread(LPVOID param) {
   g_versionCheckPassed = true;
 
   // Initialize mod loader — hooks must be active before game opens hd.dat
+  // Disabled when texture dump is active (dump needs unmodified textures)
   bool modLoaderEnabled = false;
-  if (settings.GetBool("mod_loader_enabled", true)) {
+  bool dumpMode = settings.GetBool("texture_dump_enabled", false);
+  if (settings.GetBool("mod_loader_enabled", true) && !dumpMode) {
     modLoaderEnabled = InitModLoader(exePathStr);
   }
 

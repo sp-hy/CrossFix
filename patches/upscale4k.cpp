@@ -284,6 +284,10 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
     Settings settings;
     settings.Load(settingsPath);
 
+    // Dump mode: skip upscale (dump needs unmodified textures)
+    if (settings.GetBool("texture_dump_enabled", false))
+      return;
+
     bool upscaleEnabled = settings.GetBool("upscale_enabled", false);
     int scale = settings.GetInt("upscale_scale", 4);
     bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
