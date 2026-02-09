@@ -169,17 +169,6 @@ bool LoadDDSTexture(ID3D11Device *pDevice, const std::string &filepath,
     return false;
   }
 
-  // Verify dimensions match
-  if (header.dwWidth != pOriginalDesc->Width ||
-      header.dwHeight != pOriginalDesc->Height) {
-    std::cout << "Replacement texture size mismatch: expected "
-              << pOriginalDesc->Width << "x" << pOriginalDesc->Height
-              << ", got " << header.dwWidth << "x" << header.dwHeight
-              << std::endl;
-    file.close();
-    return false;
-  }
-
   // Determine format and bytes per pixel
   DXGI_FORMAT format = pOriginalDesc->Format;
   UINT bytesPerPixel = 0;
@@ -259,13 +248,18 @@ bool LoadDDSTexture(ID3D11Device *pDevice, const std::string &filepath,
     return false; // Truncated read - skip (caller may blacklist)
   }
 
-  // Create texture with replacement data
+  // Create texture at the file's own dimensions (supports HD replacements)
+  D3D11_TEXTURE2D_DESC createDesc = *pOriginalDesc;
+  createDesc.Width = header.dwWidth;
+  createDesc.Height = header.dwHeight;
+  createDesc.MipLevels = 1;
+
   D3D11_SUBRESOURCE_DATA initData;
   initData.pSysMem = pixelData.data();
   initData.SysMemPitch = rowPitch;
   initData.SysMemSlicePitch = 0;
 
-  HRESULT hr = pDevice->CreateTexture2D(pOriginalDesc, &initData, ppTexture2D);
+  HRESULT hr = pDevice->CreateTexture2D(&createDesc, &initData, ppTexture2D);
   if (FAILED(hr)) {
     std::cout << "Failed to create replacement texture from " << filepath
               << std::endl;
@@ -332,15 +326,6 @@ bool LoadPNGTexture(ID3D11Device *pDevice, const std::string &filepath,
   UINT width, height;
   pFrame->GetSize(&width, &height);
 
-  if (width != pOriginalDesc->Width || height != pOriginalDesc->Height) {
-    std::cout << "PNG replacement size mismatch: expected "
-              << pOriginalDesc->Width << "x" << pOriginalDesc->Height
-              << ", got " << width << "x" << height << std::endl;
-    if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
-      CoUninitialize();
-    return false;
-  }
-
   // Convert to matching pixel format
   GUID targetWicFormat =
       isBGRA ? GUID_WICPixelFormat32bppBGRA : GUID_WICPixelFormat32bppRGBA;
@@ -376,8 +361,10 @@ bool LoadPNGTexture(ID3D11Device *pDevice, const std::string &filepath,
   if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
     CoUninitialize();
 
-  // Create texture
+  // Create texture at the PNG's own dimensions (supports HD replacements)
   D3D11_TEXTURE2D_DESC createDesc = *pOriginalDesc;
+  createDesc.Width = width;
+  createDesc.Height = height;
   createDesc.MipLevels = 1;
 
   D3D11_SUBRESOURCE_DATA initData = {};
@@ -534,8 +521,13 @@ bool LoadReplacementSRV(ID3D11Device *pDevice,
     return false;
   }
 
+  // Query actual replacement texture desc (may differ from original for HD
+  // replacements)
+  D3D11_TEXTURE2D_DESC replaceDesc;
+  pReplaceTex->GetDesc(&replaceDesc);
+
   D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-  srvDesc.Format = pDesc->Format;
+  srvDesc.Format = replaceDesc.Format;
   srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
   srvDesc.Texture2D.MostDetailedMip = 0;
   srvDesc.Texture2D.MipLevels = 1;
