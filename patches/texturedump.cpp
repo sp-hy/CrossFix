@@ -1,15 +1,11 @@
 #include "texturedump.h"
-#include "texturereplace.h"
 #include "../utils/memory.h"
 #include "../utils/settings.h"
-#include "widescreen.h"
+#include "texturereplace.h"
 #include <Windows.h>
-#include <algorithm>
 #include <fstream>
-#include <functional>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -184,14 +180,14 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
 
   // Skip if format is not dumpable
   if (!IsDumpableFormat(pDesc->Format)) {
-    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height 
+    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height
               << " - unsupported format: " << pDesc->Format << std::endl;
     return false;
   }
 
   // Skip if texture is too large (safety check)
   if (pDesc->Width > 16384 || pDesc->Height > 16384) {
-    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height 
+    std::cout << "Skipping texture " << pDesc->Width << "x" << pDesc->Height
               << " - too large" << std::endl;
     return false;
   }
@@ -220,7 +216,8 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
   ComPtr<ID3D11Texture2D> pStaging;
   HRESULT hr = pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
   if (FAILED(hr) || !pStaging) {
-    std::cout << "Failed to create staging texture for " << pDesc->Width << "x" << pDesc->Height << std::endl;
+    std::cout << "Failed to create staging texture for " << pDesc->Width << "x"
+              << pDesc->Height << std::endl;
     return false;
   }
 
@@ -233,8 +230,9 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
   D3D11_MAPPED_SUBRESOURCE mapped = {};
   hr = pContext->Map(pStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
   if (FAILED(hr) || !mapped.pData) {
-    std::cout << "Failed to map staging texture for " << pDesc->Width << "x" << pDesc->Height 
-              << " HRESULT: 0x" << std::hex << hr << std::dec << std::endl;
+    std::cout << "Failed to map staging texture for " << pDesc->Width << "x"
+              << pDesc->Height << " HRESULT: 0x" << std::hex << hr << std::dec
+              << std::endl;
     pStaging.Reset();
     return false;
   }
@@ -467,8 +465,7 @@ bool SaveTextureAsDDS(ID3D11Texture2D *pTexture,
 // Write DDS file directly from CPU-side pInitialData (no GPU staging needed)
 bool SaveDDSFromInitialData(const D3D11_TEXTURE2D_DESC *pDesc,
                             const D3D11_SUBRESOURCE_DATA *pInitialData,
-                            const std::string &filepath,
-                            bool *pIsTransparent) {
+                            const std::string &filepath, bool *pIsTransparent) {
   if (pIsTransparent)
     *pIsTransparent = false;
   if (!pDesc || !pInitialData || !pInitialData->pSysMem)
@@ -628,8 +625,7 @@ bool SaveDDSFromInitialData(const D3D11_TEXTURE2D_DESC *pDesc,
 
   // Write pixel data from pInitialData (CPU memory)
   bool writeSuccess = true;
-  const uint8_t *pData =
-      static_cast<const uint8_t *>(pInitialData->pSysMem);
+  const uint8_t *pData = static_cast<const uint8_t *>(pInitialData->pSysMem);
 
   try {
     if (isBlockCompressed) {
@@ -638,9 +634,8 @@ bool SaveDDSFromInitialData(const D3D11_TEXTURE2D_DESC *pDesc,
       UINT blockRowSize = blocksWide * bytesPerBlock;
 
       for (UINT blockY = 0; blockY < blocksHigh; ++blockY) {
-        file.write(
-            reinterpret_cast<const char *>(pData + blockY * rowPitch),
-            blockRowSize);
+        file.write(reinterpret_cast<const char *>(pData + blockY * rowPitch),
+                   blockRowSize);
         if (file.fail()) {
           writeSuccess = false;
           break;
@@ -754,10 +749,10 @@ uint64_t HashTextureData(const D3D11_TEXTURE2D_DESC *pDesc, const void *pData,
   if (rowPitch < actualRowSize)
     return hash;
 
-  size_t dataSize = (numRows <= 1)
-                        ? actualRowSize
-                        : static_cast<size_t>(rowPitch) * (numRows - 1) +
-                              actualRowSize;
+  size_t dataSize =
+      (numRows <= 1)
+          ? actualRowSize
+          : static_cast<size_t>(rowPitch) * (numRows - 1) + actualRowSize;
 
   if (dataSize == 0 || dataSize >= 256 * 1024 * 1024)
     return hash;
@@ -854,10 +849,9 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
   std::string filenameStr = filename.str();
 
   // Check if file already exists on disk (persisted from previous session)
-  std::string foldersToCheck[] = {"BGRA4",       "BGRA8",   "RGBA8",
-                                  "BC1_DXT1",    "BC2_DXT3", "BC3_DXT5",
-                                  "BC7",         "transparent",
-                                  "rendertargets", "other"};
+  std::string foldersToCheck[] = {
+      "BGRA4",    "BGRA8", "RGBA8",       "BC1_DXT1",      "BC2_DXT3",
+      "BC3_DXT5", "BC7",   "transparent", "rendertargets", "other"};
   for (const auto &folder : foldersToCheck) {
     std::string checkPath = g_dumpPath + "\\" + folder + "\\" + filenameStr;
     DWORD attrs = GetFileAttributesA(checkPath.c_str());
@@ -869,8 +863,7 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
   try {
     if (isRenderTarget) {
       // Render targets go to rendertargets\ folder via GPU staging copy
-      std::string rtPath =
-          g_dumpPath + "\\rendertargets\\" + filenameStr;
+      std::string rtPath = g_dumpPath + "\\rendertargets\\" + filenameStr;
       bool isTransparent = false;
       if (pTexture &&
           SaveTextureAsDDS(pTexture, pDesc, rtPath, &isTransparent)) {
@@ -894,14 +887,13 @@ void DumpTexture2D(ID3D11Device *pDevice, ID3D11DeviceContext *pContext,
       if (SaveDDSFromInitialData(pDesc, pInitialData, tempPath,
                                  &isTransparent)) {
         if (isTransparent) {
-          std::string finalPath =
-              g_dumpPath + "\\transparent\\" + filenameStr;
+          std::string finalPath = g_dumpPath + "\\transparent\\" + filenameStr;
           MoveFileA(tempPath.c_str(), finalPath.c_str());
           std::cout << "Dumped transparent: " << pDesc->Width << "x"
                     << pDesc->Height << " " << filenameStr << std::endl;
         } else {
-          std::cout << "Dumped: " << pDesc->Width << "x" << pDesc->Height
-                    << " " << filenameStr << std::endl;
+          std::cout << "Dumped: " << pDesc->Width << "x" << pDesc->Height << " "
+                    << filenameStr << std::endl;
         }
       }
     }
@@ -1009,10 +1001,9 @@ void DumpTextureFromGPU(ID3D11DeviceContext *pContext,
 
   // Check if already on disk
   bool isRT = (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) != 0;
-  std::string foldersToCheck[] = {"BGRA4",          "BGRA8",   "RGBA8",
-                                  "BC1_DXT1",       "BC2_DXT3", "BC3_DXT5",
-                                  "BC7",            "transparent",
-                                  "rendertargets",  "other"};
+  std::string foldersToCheck[] = {
+      "BGRA4",    "BGRA8", "RGBA8",       "BC1_DXT1",      "BC2_DXT3",
+      "BC3_DXT5", "BC7",   "transparent", "rendertargets", "other"};
   for (const auto &folder : foldersToCheck) {
     std::string checkPath = g_dumpPath + "\\" + folder + "\\" + filenameStr;
     if (GetFileAttributesA(checkPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -1022,9 +1013,9 @@ void DumpTextureFromGPU(ID3D11DeviceContext *pContext,
   }
 
   // Check transparency
-  bool isTransparent = IsFullyTransparent(mapped.pData, pDesc->Width,
-                                          pDesc->Height, mapped.RowPitch,
-                                          pDesc->Format);
+  bool isTransparent =
+      IsFullyTransparent(mapped.pData, pDesc->Width, pDesc->Height,
+                         mapped.RowPitch, pDesc->Format);
 
   // Determine folder
   std::string folder;
@@ -1227,10 +1218,8 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
           // Check if already on disk
           bool onDisk = false;
           std::string foldersToCheck[] = {
-              "BGRA4",        "BGRA8",         "RGBA8",
-              "BC1_DXT1",     "BC2_DXT3",      "BC3_DXT5",
-              "BC7",          "transparent",   "rendertargets",
-              "other"};
+              "BGRA4",    "BGRA8", "RGBA8",       "BC1_DXT1",      "BC2_DXT3",
+              "BC3_DXT5", "BC7",   "transparent", "rendertargets", "other"};
           for (const auto &folder : foldersToCheck) {
             std::string checkPath =
                 g_dumpPath + "\\" + folder + "\\" + filenameStr;
@@ -1242,16 +1231,15 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
           }
 
           if (!onDisk) {
-            bool isRT =
-                (desc.BindFlags & D3D11_BIND_RENDER_TARGET) != 0;
-            bool isTransparent = IsFullyTransparent(
-                mapped.pData, desc.Width, desc.Height, mapped.RowPitch,
-                desc.Format);
+            bool isRT = (desc.BindFlags & D3D11_BIND_RENDER_TARGET) != 0;
+            bool isTransparent =
+                IsFullyTransparent(mapped.pData, desc.Width, desc.Height,
+                                   mapped.RowPitch, desc.Format);
 
             std::string folder;
             if (isRT)
-              folder =
-                  isTransparent ? "rendertargets\\transparent" : "rendertargets";
+              folder = isTransparent ? "rendertargets\\transparent"
+                                     : "rendertargets";
             else if (isTransparent)
               folder = "transparent";
             else
@@ -1270,9 +1258,9 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
             bool unused = false;
             if (SaveDDSFromInitialData(&writeDesc, &tempData, filepath,
                                        &unused)) {
-              std::cout << "Dumped" << (isRT ? " RT" : "") << ": "
-                        << desc.Width << "x" << desc.Height << " "
-                        << filenameStr << std::endl;
+              std::cout << "Dumped" << (isRT ? " RT" : "") << ": " << desc.Width
+                        << "x" << desc.Height << " " << filenameStr
+                        << std::endl;
             }
           }
         }
@@ -1339,8 +1327,7 @@ void ApplyTextureDumpHooks(ID3D11Device *pDevice,
     return;
 
   // PSSetShaderResources = context vtable index 8
-  InstallVtableHook(contextVtable, 50, 8,
-                    (void *)Hooked_PSSetShaderResources,
+  InstallVtableHook(contextVtable, 50, 8, (void *)Hooked_PSSetShaderResources,
                     (volatile void **)&Original_PSSetShaderResources,
                     &g_psSetSRHookReady);
   Sleep(1);
@@ -1358,9 +1345,6 @@ namespace {
 std::unordered_set<uint64_t> g_resizeHashes;
 // List of texture sizes (Width, Height) that should be resized
 std::set<std::pair<UINT, UINT>> g_resizeSizes;
-// Map of texture sizes to number of horizontal pieces (for split textures)
-// Key: {Width, Height}, Value: number of pieces (2, 3, 5, etc.)
-std::map<std::pair<UINT, UINT>, UINT> g_splitTexturePieces;
 bool g_resizeHashesInitialized = false;
 
 // Initialize the resize hash list with known textures
@@ -1394,14 +1378,8 @@ void InitializeResizeHashes() {
   // g_resizeSizes.insert({ 512, 64 });
   // g_resizeSizes.insert({ 800, 88 });
 
-  // Textures that are split into multiple horizontal pieces
-  // Format: { {Width, Height}, NumPieces }
-  // g_splitTexturePieces[{ 512, 896 }] = 2;   // Menu portraits (menu)
-  // g_splitTexturePieces[{ 528, 144 }] = 5;  // Menu Icons
-
   std::cout << "Initialized texture resize list with " << g_resizeHashes.size()
-            << " hashes, " << g_resizeSizes.size() << " sizes, and "
-            << g_splitTexturePieces.size() << " split textures" << std::endl;
+            << " hashes and " << g_resizeSizes.size() << " sizes" << std::endl;
 }
 } // namespace
 
@@ -1441,13 +1419,9 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC *pDesc,
   try {
     InitializeResizeHashes();
 
-    // 1. Check if this size is explicitly whitelisted (normal or split)
+    // 1. Check if this size is explicitly whitelisted
     if (g_resizeSizes.find({pDesc->Width, pDesc->Height}) !=
         g_resizeSizes.end()) {
-      return true;
-    }
-    if (g_splitTexturePieces.find({pDesc->Width, pDesc->Height}) !=
-        g_splitTexturePieces.end()) {
       return true;
     }
 
@@ -1464,28 +1438,6 @@ bool ShouldResizeTexture(const D3D11_TEXTURE2D_DESC *pDesc,
     // If anything fails, don't resize
     return false;
   }
-}
-
-// Get the number of pieces a texture is split into (0 if not split)
-UINT GetTextureSplitPieces(const D3D11_TEXTURE2D_DESC *pDesc) {
-  if (!pDesc)
-    return 0;
-
-  try {
-    InitializeResizeHashes();
-    auto it = g_splitTexturePieces.find({pDesc->Width, pDesc->Height});
-    if (it != g_splitTexturePieces.end()) {
-      return it->second;
-    }
-    return 0;
-  } catch (...) {
-    return 0;
-  }
-}
-
-// Check if a texture should use split padding (for split textures)
-bool ShouldCenterPadTexture(const D3D11_TEXTURE2D_DESC *pDesc) {
-  return GetTextureSplitPieces(pDesc) > 0;
 }
 
 // Resize texture content by adding pillarboxing (empty space on sides)

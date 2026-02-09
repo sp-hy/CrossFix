@@ -137,93 +137,6 @@ UINT GetBytesPerPixel(DXGI_FORMAT format) {
   }
 }
 
-void CreateCenterPaddedData(const D3D11_TEXTURE2D_DESC *pDesc,
-                            const D3D11_SUBRESOURCE_DATA *pInitialData,
-                            std::vector<uint8_t> &buffer) {
-  if (!pDesc || !pInitialData || !pInitialData->pSysMem ||
-      pInitialData->SysMemPitch == 0)
-    return;
-  if (pDesc->Width == 0 || pDesc->Height == 0)
-    return;
-
-  // Skip block-compressed formats - they can't be resized with pixel
-  // interpolation
-  UINT bytesPerPixel = GetBytesPerPixel(pDesc->Format);
-  if (bytesPerPixel == 0)
-    return;
-
-  try {
-    float widescreenRatio = GetCurrentWidescreenRatio();
-
-    // Get number of pieces this texture is split into
-    UINT numPieces = GetTextureSplitPieces(pDesc);
-    if (numPieces == 0)
-      numPieces = 2; // Default to 2 pieces for backward compatibility
-
-    // Each piece width (e.g., 512/2=256 for 2 pieces, 1280/5=256 for 5 pieces)
-    UINT pieceWidth = pDesc->Width / numPieces;
-
-    // Calculate the scaled content width for each piece
-    UINT pieceContentWidth = static_cast<UINT>(pieceWidth * widescreenRatio);
-    if (pieceContentWidth < 1)
-      pieceContentWidth = 1;
-    if (pieceContentWidth > pieceWidth)
-      pieceContentWidth = pieceWidth;
-
-    // Padding for each piece (distributed evenly on both sides)
-    UINT piecePadding = (pieceWidth - pieceContentWidth) / 2;
-
-    UINT rowPitch = pDesc->Width * bytesPerPixel;
-
-    buffer.resize(rowPitch * pDesc->Height);
-    std::fill(buffer.begin(), buffer.end(), 0);
-
-    if (pInitialData && pInitialData->pSysMem &&
-        pInitialData->SysMemPitch > 0) {
-      const uint8_t *srcData =
-          static_cast<const uint8_t *>(pInitialData->pSysMem);
-      size_t srcBufferSize = pInitialData->SysMemPitch * pDesc->Height;
-
-      // Process each piece
-      for (UINT piece = 0; piece < numPieces; ++piece) {
-        UINT pieceStartX = piece * pieceWidth; // Source start position
-        UINT dstStartX =
-            pieceStartX +
-            piecePadding; // Destination start position with padding
-
-        for (UINT y = 0; y < pDesc->Height; ++y) {
-          for (UINT x = 0; x < pieceContentWidth; ++x) {
-            float srcXf = (float)x / widescreenRatio;
-            UINT srcX0 = pieceStartX + static_cast<UINT>(srcXf);
-            UINT srcX1 = srcX0 + 1;
-
-            // Clamp to piece boundaries
-            UINT pieceEndX = pieceStartX + pieceWidth;
-            if (srcX0 >= pieceEndX)
-              srcX0 = pieceEndX - 1;
-            if (srcX1 >= pieceEndX)
-              srcX1 = pieceEndX - 1;
-
-            float fracX = srcXf - static_cast<UINT>(srcXf);
-
-            // Position in output with padding offset
-            UINT dstOffset = y * rowPitch + (dstStartX + x) * bytesPerPixel;
-            if (dstOffset + bytesPerPixel > buffer.size())
-              continue;
-
-            InterpolatePixel(srcData, srcBufferSize,
-                             pInitialData->SysMemPitch, srcX0, srcX1, fracX, y,
-                             pDesc->Format, bytesPerPixel,
-                             buffer.data() + dstOffset);
-          }
-        }
-      }
-    }
-  } catch (...) {
-    buffer.clear();
-  }
-}
-
 void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC *pDesc,
                            const D3D11_SUBRESOURCE_DATA *pInitialData,
                            std::vector<uint8_t> &buffer) {
@@ -232,12 +145,6 @@ void CreatePillarboxedData(const D3D11_TEXTURE2D_DESC *pDesc,
     return;
   if (pDesc->Width == 0 || pDesc->Height == 0)
     return;
-
-  // Check if this texture needs center padding (for split left/right textures)
-  if (ShouldCenterPadTexture(pDesc)) {
-    CreateCenterPaddedData(pDesc, pInitialData, buffer);
-    return;
-  }
 
   // Skip block-compressed formats - they can't be resized with pixel
   // interpolation
