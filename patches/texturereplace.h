@@ -22,3 +22,7 @@ bool LoadReplacementSRV(ID3D11Device *pDevice,
                         const D3D11_TEXTURE2D_DESC *pDesc,
                         uint64_t contentHash,
                         ID3D11ShaderResourceView **ppSRV);
+
+// Quick check: does any replacement file exist at these dimensions?
+// Used to skip expensive staging for textures that can't possibly match.
+bool HasReplacementAtDimensions(UINT width, UINT height);

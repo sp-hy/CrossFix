@@ -931,7 +931,16 @@ void InitSeenTexturesCS() {
 // Replacement SRV cache: original texture ptr -> replacement SRV
 std::unordered_map<void *, ComPtr<ID3D11ShaderResourceView>>
     g_replacementSRVCache;
-std::unordered_set<void *> g_checkedNoReplacement;
+// Negative replacement cache: texture ptr -> (retry count, last check time).
+// Textures get re-checked up to MAX_RETRIES times (spaced by RETRY_INTERVAL_MS)
+// to handle the PS1 emulator filling texture content after initial bind.
+constexpr int REPLACE_MAX_RETRIES = 5;
+constexpr DWORD REPLACE_RETRY_INTERVAL_MS = 500;
+struct NoReplacementInfo {
+  int retryCount;
+  DWORD lastCheckTime;
+};
+std::unordered_map<void *, NoReplacementInfo> g_checkedNoReplacement;
 CRITICAL_SECTION g_replacementCacheCS;
 volatile LONG g_replacementCacheCSInitialized = 0;
 
@@ -1073,6 +1082,23 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
     return;
   }
 
+  // Periodically clear the dump pointer dedup set so textures get re-staged.
+  // The PS1 emulator reuses texture objects with different content, and
+  // destroyed textures may get reallocated at the same address.
+  // Content hash dedup (g_recentDumps) prevents duplicate disk writes.
+  if (dumpEnabled) {
+    static DWORD g_lastDumpClearTime = 0;
+    DWORD now = GetTickCount();
+    if (now - g_lastDumpClearTime > 2000) {
+      InitSeenTexturesCS();
+      EnterCriticalSection(&g_seenTexturesCS);
+      g_seenTexturePointers.clear();
+      LeaveCriticalSection(&g_seenTexturesCS);
+      g_lastDumpClearTime = now;
+    }
+  }
+  // Replacement uses per-texture retry instead of bulk clear (see below).
+
   // Prepare modified SRV array for replacement swaps (D3D11 max = 128)
   ID3D11ShaderResourceView *modSRVs[128];
   bool anyReplaced = false;
@@ -1113,7 +1139,19 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
         pTexture->Release();
         continue;
       }
-      bool checked = g_checkedNoReplacement.count(pTexture) > 0;
+      bool checked = false;
+      auto noRepIt = g_checkedNoReplacement.find(pTexture);
+      if (noRepIt != g_checkedNoReplacement.end()) {
+        if (noRepIt->second.retryCount >= REPLACE_MAX_RETRIES) {
+          checked = true; // Exhausted retries, permanently skip
+        } else {
+          DWORD now = GetTickCount();
+          if (now - noRepIt->second.lastCheckTime < REPLACE_RETRY_INTERVAL_MS) {
+            checked = true; // Too soon to retry
+          }
+          // else: enough time passed, re-check this texture
+        }
+      }
       LeaveCriticalSection(&g_replacementCacheCS);
 
       if (!checked)
@@ -1142,29 +1180,55 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
     D3D11_TEXTURE2D_DESC desc;
     pTexture->GetDesc(&desc);
 
-    // Skip upscaled render targets - they are huge framebuffers that would
-    // cause massive staging copies and have no useful content for replacement
+    // Helper: mark texture as permanently having no replacement
+    auto markNoReplacementPermanent = [&]() {
+      if (replaceEnabled) {
+        InitReplacementCacheCS();
+        EnterCriticalSection(&g_replacementCacheCS);
+        g_checkedNoReplacement[pTexture] = {REPLACE_MAX_RETRIES,
+                                            GetTickCount()};
+        LeaveCriticalSection(&g_replacementCacheCS);
+      }
+    };
+
+    // Helper: increment retry count for texture (will be re-checked later)
+    auto markNoReplacementRetry = [&]() {
+      if (replaceEnabled) {
+        InitReplacementCacheCS();
+        EnterCriticalSection(&g_replacementCacheCS);
+        auto it = g_checkedNoReplacement.find(pTexture);
+        if (it != g_checkedNoReplacement.end()) {
+          it->second.retryCount++;
+          it->second.lastCheckTime = GetTickCount();
+        } else {
+          g_checkedNoReplacement[pTexture] = {1, GetTickCount()};
+        }
+        LeaveCriticalSection(&g_replacementCacheCS);
+      }
+    };
+
+    // Skip upscaled render targets - huge framebuffers, no useful content
     if (IsUpscaleActive() &&
         desc.Width == (UINT)GetUpscaledWidth() &&
         desc.Height == (UINT)GetUpscaledHeight() &&
         (desc.BindFlags & D3D11_BIND_RENDER_TARGET)) {
-      if (replaceEnabled) {
-        InitReplacementCacheCS();
-        EnterCriticalSection(&g_replacementCacheCS);
-        g_checkedNoReplacement.insert(pTexture);
-        LeaveCriticalSection(&g_replacementCacheCS);
-      }
+      markNoReplacementPermanent();
       pTexture->Release();
       continue;
     }
 
     if (desc.Width < 4 || desc.Height < 4 || !IsDumpableFormat(desc.Format)) {
-      if (replaceEnabled) {
-        InitReplacementCacheCS();
-        EnterCriticalSection(&g_replacementCacheCS);
-        g_checkedNoReplacement.insert(pTexture);
-        LeaveCriticalSection(&g_replacementCacheCS);
-      }
+      markNoReplacementPermanent();
+      pTexture->Release();
+      continue;
+    }
+
+    // Dimension pre-filter: if no replacement file exists at these dimensions,
+    // skip the expensive staging copy entirely. This eliminates the vast
+    // majority of GPU staging work.
+    if (replaceEnabled && !dumpEnabled &&
+        !HasReplacementAtDimensions(desc.Width, desc.Height)) {
+      markNoReplacementPermanent();
       pTexture->Release();
       continue;
     }
@@ -1188,12 +1252,7 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
       ComPtr<ID3D11Texture2D> pStaging;
       hr = pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
       if (FAILED(hr) || !pStaging) {
-        if (replaceEnabled) {
-          InitReplacementCacheCS();
-          EnterCriticalSection(&g_replacementCacheCS);
-          g_checkedNoReplacement.insert(pTexture);
-          LeaveCriticalSection(&g_replacementCacheCS);
-        }
+        markNoReplacementRetry();
         pTexture->Release();
         continue;
       }
@@ -1207,12 +1266,7 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       hr = This->Map(pStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
       if (FAILED(hr) || !mapped.pData) {
-        if (replaceEnabled) {
-          InitReplacementCacheCS();
-          EnterCriticalSection(&g_replacementCacheCS);
-          g_checkedNoReplacement.insert(pTexture);
-          LeaveCriticalSection(&g_replacementCacheCS);
-        }
+        markNoReplacementRetry();
         pTexture->Release();
         continue;
       }
@@ -1295,28 +1349,22 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
         ComPtr<ID3D11ShaderResourceView> pReplaceSRV;
         if (LoadReplacementSRV(pDevice.Get(), &desc, hash,
                                pReplaceSRV.GetAddressOf())) {
+          // Matched! Move to positive cache (permanent).
           InitReplacementCacheCS();
           EnterCriticalSection(&g_replacementCacheCS);
           g_replacementSRVCache[pTexture] = pReplaceSRV;
+          g_checkedNoReplacement.erase(pTexture); // Remove from negative cache
           LeaveCriticalSection(&g_replacementCacheCS);
           modSRVs[i] = pReplaceSRV.Get();
           anyReplaced = true;
         } else {
-          InitReplacementCacheCS();
-          EnterCriticalSection(&g_replacementCacheCS);
-          g_checkedNoReplacement.insert(pTexture);
-          LeaveCriticalSection(&g_replacementCacheCS);
+          markNoReplacementRetry();
         }
       }
 
       This->Unmap(pStaging.Get(), 0);
     } catch (...) {
-      if (replaceEnabled) {
-        InitReplacementCacheCS();
-        EnterCriticalSection(&g_replacementCacheCS);
-        g_checkedNoReplacement.insert(pTexture);
-        LeaveCriticalSection(&g_replacementCacheCS);
-      }
+      markNoReplacementRetry();
     }
 
     pTexture->Release();

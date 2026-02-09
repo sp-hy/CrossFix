@@ -30,6 +30,8 @@ bool g_cacheBuilt = false;
 std::map<std::tuple<UINT, UINT, uint64_t>, std::string> g_replacementByHash;
 // Fallback for render targets: (width, height) -> list of paths (WxH_*.dds)
 std::map<std::pair<UINT, UINT>, std::vector<std::string>> g_replacementBySize;
+// Quick dimension check: set of (width, height) that have any replacement file
+std::set<std::pair<UINT, UINT>> g_replacementDimensions;
 
 // Initialize mods path
 void InitializeModsPath() {
@@ -105,6 +107,7 @@ void ScanReplacementFiles(const std::string &pattern) {
     if (ParseReplacementFilename(fd.cFileName, &w, &h, &hash)) {
       std::string fullPath = g_modsPath + "\\" + fd.cFileName;
       g_replacementByHash[{w, h, hash}] = fullPath;
+      g_replacementDimensions.insert({w, h});
     }
   } while (FindNextFileA(hFind, &fd));
   FindClose(hFind);
@@ -550,4 +553,8 @@ bool LoadReplacementSRV(ID3D11Device *pDevice,
                          : path;
   std::cout << "Replaced texture (bind-time): " << name << std::endl;
   return true;
+}
+
+bool HasReplacementAtDimensions(UINT width, UINT height) {
+  return g_replacementDimensions.count({width, height}) > 0;
 }
