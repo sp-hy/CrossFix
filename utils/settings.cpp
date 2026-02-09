@@ -222,77 +222,62 @@ bool Settings::SaveDefault(const std::string &filename) {
     return false;
   }
 
-  file << "# Chrono Cross Crossfix Settings" << std::endl << std::endl;
-  file << "# Enable or disable the dynamic widescreen patch" << std::endl;
-  file << "# This will automatically detect and adjust to any "
-          "resolution/aspect ratio"
-       << std::endl;
-  file << "# Must be used with the setting ScreenType: Full" << std::endl;
-  file << "widescreen_enabled=1" << std::endl << std::endl;
-  file << "# Enable or disable the double FPS mode" << std::endl;
-  file << "# Should be used with the slowdown mode (Press F1 in game), Should "
-          "provide a smooth 60 everywhere"
-       << std::endl;
-  file << "# Disable if you use another tool like SpecialK" << std::endl;
-  file << "# Use with desktop mode if playing on Steamdeck" << std::endl;
-  file << "# 0 = disabled (30 field/60 battle FPS), 1 = enabled (60 FPS "
-          "everywhere)"
-       << std::endl;
-  file << "double_fps_mode=1" << std::endl << std::endl;
-  file << "# Hide the slow-motion icon (e.g. when using double FPS / slowdown)"
-       << std::endl;
-  file << "# 0 = show icon, 1 = hide icon (default)" << std::endl;
-  file << "hide_slow_icon=1" << std::endl << std::endl;
-  file << "# Disable pause when window loses focus" << std::endl;
-  file << "# 0 = game pauses when window is inactive (default behavior)"
-       << std::endl;
-  file << "# 1 = game & music continue running when window is inactive"
-       << std::endl;
-  file << "disable_pause_on_focus_loss=1" << std::endl << std::endl;
-  file << "# Texture upscale (experimental - may cause crashes or instability)"
-       << std::endl;
-  file << "# 1 = off, 2 = 2x, 3 = 3x, 4 = 4x" << std::endl;
-  file << "upscale_scale=1" << std::endl << std::endl;
-  file << "# Enable or disable texture dumping" << std::endl;
-  file << "# Dumps textures to /dump/ directory with hash-based filenames"
-       << std::endl;
-  file << "# NOTE: Texture resizing is automatically disabled when dumping is "
-          "enabled"
-       << std::endl;
-  file << "# 0 = disabled, 1 = enabled" << std::endl;
-  file << "texture_dump_enabled=0" << std::endl << std::endl;
-  file << "# Enable texture replacement from mods/textures (replacement "
-          ".png/dds by hash)"
-       << std::endl;
-  file << "# 0 = disabled, 1 = enabled" << std::endl;
-  file << "texture_replace_enabled=0" << std::endl << std::endl;
-  file << "upscale_setup_completed=0" << std::endl;
+  file << "# ============================================\n";
+  file << "#   Chrono Cross - CrossFix Settings\n";
+  file << "# ============================================\n\n";
+
+  // --- Display ---
+  file << "# ============================================\n";
+  file << "#   Display\n";
+  file << "# ============================================\n\n";
+  file << "# Dynamic widescreen (auto-adjusts to resolution/aspect ratio).\n";
+  file << "# Use with in-game ScreenType: Full.\n";
+  file << "widescreen_enabled=1\n\n";
+  file << "# Force camera boundaries in rooms (consistent widescreen).\n";
+  file << "# Disable if it breaks camera placement in a scene.\n";
+  file << "boundary_overrides=1\n\n";
+
+  // --- Performance / timing ---
+  file << "# ============================================\n";
+  file << "#   Performance / timing\n";
+  file << "# ============================================\n\n";
   file
-      << "# Force camera boundaries in rooms that might otherwise override them"
-      << std::endl;
-  file << "# Disable if this breaks camera placement in a scene" << std::endl;
-  file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
-  file << "boundary_overrides=1" << std::endl << std::endl;
-  file << "# Enable or disable the mod loader (experimental)" << std::endl;
-  file << "# Loads replacement assets from the mods/ folder instead of from "
-          ".dat files in /data/"
-       << std::endl;
-  file << "# If a mod requests you to replace files in a .dat file you can "
-          "simply add them here instead"
-       << std::endl;
-  file << "# Eg instead of adding BGs to hd.dat's /data/map/mapbin/ you can "
-          "add them to mods/map/mapbin"
-       << std::endl;
-  file << "# 0 = disabled, 1 = enabled (default)" << std::endl;
-  file << "mod_loader_enabled=0" << std::endl << std::endl;
-  file << "# Force POINT texture filtering (fixes lines around overlay "
-          "textures when upscaling)"
-       << std::endl;
-  file << "# Makes all textures use nearest-neighbor filtering (pixelated but "
-          "no bleed)"
-       << std::endl;
-  file << "# 0 = disabled (default), 1 = enabled" << std::endl;
-  file << "sampler_force_point=0" << std::endl;
+      << "# Double FPS mode: 60 FPS in field (use with in-game slowdown/F1).\n";
+  file << "# Disable if using another tool (e.g. SpecialK, GameScope, etc).\n";
+  file << "# 0 = 30 field / 60 battle,  1 = 60 everywhere\n";
+  file << "double_fps_mode=1\n\n";
+  file << "# Hide the slow-motion icon when using double FPS / slowdown.\n";
+  file << "hide_slow_icon=1\n\n";
+  file << "# Keep running when window loses focus (no pause, music "
+          "continues).\n";
+  file << "# 0 = pause when inactive,  1 = keep running\n";
+  file << "disable_pause_on_focus_loss=1\n\n";
+
+  // --- Textures / upscaling ---
+  file << "# ============================================\n";
+  file << "#   Textures / upscaling\n";
+  file << "# ============================================\n\n";
+  file << "# Upscale: 1=off, 2=2x, 3=3x, 4=4x (experimental, may crash).\n";
+  file << "upscale_scale=1\n\n";
+  file << "# Internal: first-run upscale prompt already shown (do not edit).\n";
+  file << "upscale_setup_completed=0\n\n";
+  file << "# Dump textures to /dump/ (hash filenames). Disables upscale while "
+          "on.\n";
+  file << "texture_dump_enabled=0\n\n";
+  file << "# Force point/nearest filtering (fixes lines on overlays when "
+          "upscaling).\n";
+  file << "# 0 = default filtering,  1 = pixelated, no bleed\n";
+  file << "sampler_force_point=0\n\n";
+
+  // --- Modding ---
+  file << "# ============================================\n";
+  file << "#   Modding\n";
+  file << "# ============================================\n\n";
+  file << "# Mod loader: load from mods/ instead of .dat (e.g. "
+          "mods/map/mapbin/).\n";
+  file << "mod_loader_enabled=0\n\n";
+  file << "# Load replacement textures from mods/textures (by hash).\n";
+  file << "texture_replace_enabled=0\n";
 
   file.close();
   return true;
@@ -305,8 +290,8 @@ bool Settings::HasKey(const std::string &key) const {
 std::vector<std::string> Settings::GetRequiredKeys() {
   return {"widescreen_enabled",      "double_fps_mode",
           "hide_slow_icon",          "disable_pause_on_focus_loss",
-          "upscale_scale",
-          "texture_dump_enabled",    "texture_replace_enabled",
-          "upscale_setup_completed", "boundary_overrides",
-          "mod_loader_enabled",      "sampler_force_point"};
+          "upscale_scale",           "texture_dump_enabled",
+          "texture_replace_enabled", "upscale_setup_completed",
+          "boundary_overrides",      "mod_loader_enabled",
+          "sampler_force_point"};
 }
