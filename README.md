@@ -49,11 +49,8 @@ double_fps_mode=1
 # 1 = game & music continue running when window is inactive
 disable_pause_on_focus_loss=1
 
-# Enable or disable Upscaling (experimental, may cause crashes)
-upscale_enabled=0
-
-# Upscale multiplier (valid values: 2, 3, or 4)
-upscale_scale=4
+# Texture upscale: 1 = off, 2 = 2x, 3 = 3x, 4 = 4x (experimental, may cause crashes)
+upscale_scale=1
 
 # Force camera boundaries in rooms for consistent widescreen
 # Disable if this breaks camera placement in a scene

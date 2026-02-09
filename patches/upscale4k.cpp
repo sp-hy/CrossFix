@@ -10,6 +10,8 @@
 #include <Windows.h>
 #include <algorithm>
 #include <iostream>
+#include <sstream>
+#include <string>
 
 // Upscale state (accessible via getters for cross-module coordination)
 static bool g_upscaleActive = false;
@@ -288,8 +290,7 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
     if (settings.GetBool("texture_dump_enabled", false))
       return;
 
-    bool upscaleEnabled = settings.GetBool("upscale_enabled", false);
-    int scale = settings.GetInt("upscale_scale", 4);
+    int scale = settings.GetInt("upscale_scale", 1);
     bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
 
     if (!setupCompleted) {
@@ -298,45 +299,32 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
       std::cout << "       CrossFix - First Run Setup       " << std::endl;
       std::cout << "========================================" << std::endl;
       std::cout << std::endl;
-      std::cout << "Would you like to enable texture upscaling?" << std::endl;
-      std::cout << std::endl;
-      std::cout << "WARNING: This feature is EXPERIMENTAL and may cause:"
+      std::cout << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
                 << std::endl;
-      std::cout << "  - Game crashes" << std::endl;
-      std::cout << "  - Visual glitches" << std::endl;
-      std::cout << "  - Performance issues" << std::endl;
+      std::cout << "  1 - Off (no upscaling)" << std::endl;
+      std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
+      std::cout << "  3 - 3x - Balanced" << std::endl;
+      std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
       std::cout << std::endl;
       std::cout << "You can change this later in settings.ini" << std::endl;
       std::cout << std::endl;
-      std::cout << "Enable upscaling? (Y/N): ";
+      std::cout << "Enter scale (1/2/3/4) [Enter = off]: ";
 
-      char choice;
-      std::cin >> choice;
-      upscaleEnabled = (choice == 'Y' || choice == 'y');
-
-      if (upscaleEnabled) {
-        std::cout << std::endl;
-        std::cout << "Select upscale multiplier:" << std::endl;
-        std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
-        std::cout << "  3 - 3x - Balanced" << std::endl;
-        std::cout << "  4 - 4x - Best quality, most demanding, may crash"
-                  << std::endl;
-        std::cout << std::endl;
-        std::cout << "Enter scale (2/3/4): ";
-
-        int scaleChoice;
-        std::cin >> scaleChoice;
-
-        if (scaleChoice >= 2 && scaleChoice <= 4) {
-          scale = scaleChoice;
-        } else {
-          std::cout << "Invalid choice, using default (4x)" << std::endl;
-          scale = 4;
-        }
+      std::string line;
+      std::getline(std::cin, line);
+      int scaleChoice = 0;
+      if (!line.empty()) {
+        std::istringstream iss(line);
+        iss >> scaleChoice;
+      }
+      if (scaleChoice >= 1 && scaleChoice <= 4) {
+        scale = scaleChoice;
+      } else {
+        if (!line.empty())
+          std::cout << "Invalid choice, using 1 (off)" << std::endl;
+        scale = 1;
       }
 
-      settings.UpdateFile(settingsPath, "upscale_enabled",
-                          upscaleEnabled ? "1" : "0");
       settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
       settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
 
@@ -346,13 +334,13 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
       std::cout << std::endl;
     }
 
-    if (!upscaleEnabled)
-      return;
-
-    if (scale < 2)
-      scale = 2;
+    if (scale < 1)
+      scale = 1;
     if (scale > 4)
       scale = 4;
+
+    if (scale == 1)
+      return;
 
     g_ResMultiplier = static_cast<float>(scale);
     g_NewWidth = BaseWidth * g_ResMultiplier;

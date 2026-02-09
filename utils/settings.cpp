@@ -249,18 +249,10 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# 1 = game & music continue running when window is inactive"
        << std::endl;
   file << "disable_pause_on_focus_loss=1" << std::endl << std::endl;
-  file << "# Enable or disable Upscaling" << std::endl;
-  file << "# WARNING: This feature is experimental and may cause crashes or "
-          "instability"
+  file << "# Texture upscale (experimental - may cause crashes or instability)"
        << std::endl;
-  file << "# 0 = disabled, 1 = enabled" << std::endl;
-  file << "upscale_enabled=0" << std::endl << std::endl;
-  file << "# Upscale multiplier (only used when upscale_enabled=1)"
-       << std::endl;
-  file << "# Valid values: 2, 3, or 4" << std::endl;
-  file << "# Higher values = better quality but more demanding & might crash"
-       << std::endl;
-  file << "upscale_scale=4" << std::endl << std::endl;
+  file << "# 1 = off, 2 = 2x, 3 = 3x, 4 = 4x" << std::endl;
+  file << "upscale_scale=1" << std::endl << std::endl;
   file << "# Enable or disable texture dumping" << std::endl;
   file << "# Dumps textures to /dump/ directory with hash-based filenames"
        << std::endl;
@@ -313,7 +305,7 @@ bool Settings::HasKey(const std::string &key) const {
 std::vector<std::string> Settings::GetRequiredKeys() {
   return {"widescreen_enabled",      "double_fps_mode",
           "hide_slow_icon",          "disable_pause_on_focus_loss",
-          "upscale_enabled",         "upscale_scale",
+          "upscale_scale",
           "texture_dump_enabled",    "texture_replace_enabled",
           "upscale_setup_completed", "boundary_overrides",
           "mod_loader_enabled",      "sampler_force_point"};
