@@ -73,8 +73,7 @@ sampler_force_point=0
 
 ## Notes
 
-- The widescreen fix requires the in-game setting **ScreenType: Full**
-- For double FPS mode, ensure the in-game slowdown mode is active (press F1). This should activate by default.
+- For double FPS mode, ensure the in-game slowdown mode is active (press F1). This should activate by default and hide the icon.
 - **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Enable `mod_loader_enabled=1` in settings.ini.
 
 ## Acknowledgements

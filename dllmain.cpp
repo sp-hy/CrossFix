@@ -50,7 +50,7 @@ DWORD WINAPI MainThread(LPVOID param) {
   freopen_s(&fout, "CONOUT$", "w", stdout);
   freopen_s(&fin, "CONIN$", "r", stdin);
 
-  std::cout << "CrossFix - v0.8" << std::endl;
+  std::cout << "CrossFix - v0.9" << std::endl;
   std::cout << std::endl;
   std::cout << "https://github.com/sp-hy/CrossFix || "
                "https://www.nexusmods.com/chronocrosstheradicaldreamersedition/"

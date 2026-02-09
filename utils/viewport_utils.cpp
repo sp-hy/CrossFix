@@ -83,6 +83,9 @@ void ApplyViewportWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
       // Loading Bar (width varies by progress - use wildcard)
       {896.0f, 2176.0f, 992.0f, WILDCARD, 32.0f, 1.0f},
 
+      // Character name legacy portrait screen
+      {64.0f, 1344.0, 0.0, 256.0f, 1792.0f, 1.0f}, // 64 + 1280 = 1344
+
       // Add more viewport definitions here as needed:
       // { BaseX, OriginalX, Y, Width, Height, Epsilon },
 
@@ -100,11 +103,9 @@ void ApplyViewportWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
       // Check if viewport matches this definition
       // Match on Width, Y, and Height (WILDCARD = -1 skips that field)
       bool widthMatch =
-          (def.width < 0) ||
-          (std::abs(viewports[i].Width - def.width) < 0.1f);
-      bool yMatch =
-          (def.y < 0) ||
-          (std::abs(viewports[i].TopLeftY - def.y) < def.epsilon);
+          (def.width < 0) || (std::abs(viewports[i].Width - def.width) < 0.1f);
+      bool yMatch = (def.y < 0) ||
+                    (std::abs(viewports[i].TopLeftY - def.y) < def.epsilon);
       bool heightMatch =
           (def.height < 0) ||
           (std::abs(viewports[i].Height - def.height) < def.epsilon);
