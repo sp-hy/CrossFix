@@ -1,5 +1,5 @@
 #include "d3d11_proxy.h"
-#include "../patches/staminabarfix.h"
+#include "../patches/viewportwidescreenfix.h"
 #include "../patches/texturedump.h"
 #include "../patches/textureresize.h"
 #include "../patches/sampleroverride.h"
@@ -99,10 +99,10 @@ static DWORD SafeApplyUpscale4KPatch(ID3D11Device *pDevice,
   }
 }
 
-static DWORD SafeApplyStaminaBarFixPatch(ID3D11Device *pDevice,
-                                         ID3D11DeviceContext *pContext) {
+static DWORD SafeApplyViewportWidescreenFixPatch(ID3D11Device *pDevice,
+                                                 ID3D11DeviceContext *pContext) {
   __try {
-    ApplyStaminaBarFixPatch(pDevice, pContext);
+    ApplyViewportWidescreenFixPatch(pDevice, pContext);
     return 0;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return GetExceptionCode();
@@ -131,11 +131,11 @@ static void ApplyHooksWithProtection(ID3D11Device *pDevice,
               << std::endl;
   }
 
-  // Try to apply stamina bar fix first (for when upscale is disabled)
-  exCode = SafeApplyStaminaBarFixPatch(pDevice, pContext);
+  // Try to apply viewport widescreen fix first (for when upscale is disabled)
+  exCode = SafeApplyViewportWidescreenFixPatch(pDevice, pContext);
   if (exCode != 0) {
-    std::cout << "Warning: Stamina bar fix hooks failed (0x" << std::hex
-              << exCode << std::dec << "), continuing without them"
+    std::cout << "Warning: Viewport widescreen fix hooks failed (0x"
+              << std::hex << exCode << std::dec << "), continuing without them"
               << std::endl;
   }
 
@@ -146,8 +146,8 @@ static void ApplyHooksWithProtection(ID3D11Device *pDevice,
               << std::endl;
   }
 
-  // Apply upscale patch (includes stamina bar fix when enabled)
-  // If upscale is enabled, this will overwrite the stamina bar hook but
+  // Apply upscale patch (includes viewport widescreen fix when enabled)
+  // If upscale is enabled, this will overwrite the viewport fix hook but
   // includes the same logic
   exCode = SafeApplyUpscale4KPatch(pDevice, pContext);
   if (exCode != 0) {

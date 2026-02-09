@@ -1,31 +1,30 @@
-// Stamina Bar Fix Patch - Widescreen corrections for UI elements
+// Viewport Widescreen Fix - Widescreen corrections for UI viewports
 
 #define NOMINMAX
-#include "staminabarfix.h"
+#include "viewportwidescreenfix.h"
 #include "../utils/memory.h"
 #include "../utils/viewport_utils.h"
 #include "widescreen.h"
 #include <Windows.h>
-#include <algorithm>
-#include <iostream>
 
 namespace {
 typedef void(STDMETHODCALLTYPE *RSSetViewports_t)(ID3D11DeviceContext *, UINT,
                                                   const D3D11_VIEWPORT *);
 
-volatile RSSetViewports_t Original_RSSetViewports_StaminaBarFix = nullptr;
-volatile LONG g_staminaBarFixHookReady = 0;
+volatile RSSetViewports_t Original_RSSetViewports_ViewportWidescreenFix =
+    nullptr;
+volatile LONG g_viewportWidescreenFixHookReady = 0;
 } // namespace
 
-void STDMETHODCALLTYPE Hooked_RSSetViewports_StaminaBarFix(
+void STDMETHODCALLTYPE Hooked_RSSetViewports_ViewportWidescreenFix(
     ID3D11DeviceContext *This, UINT NumViewports,
     const D3D11_VIEWPORT *pViewports) {
   MemoryBarrier();
-  RSSetViewports_t pOriginal = Original_RSSetViewports_StaminaBarFix;
+  RSSetViewports_t pOriginal = Original_RSSetViewports_ViewportWidescreenFix;
 
   if (!pOriginal)
     return;
-  if (!pViewports || NumViewports == 0 || !g_staminaBarFixHookReady) {
+  if (!pViewports || NumViewports == 0 || !g_viewportWidescreenFixHookReady) {
     pOriginal(This, NumViewports, pViewports);
     return;
   }
@@ -43,14 +42,14 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports_StaminaBarFix(
   // Ratio should be < 1.0 for widescreen (e.g., 0.75 for 16:9)
   const float WIDESCREEN_THRESHOLD = 0.99f;
   if (ratio < WIDESCREEN_THRESHOLD) {
-    ViewportUtils::ApplyStaminaBarWidescreenFix(vps, count, ratio);
+    ViewportUtils::ApplyViewportWidescreenFix(vps, count, ratio);
   }
 
   pOriginal(This, count, vps);
 }
 
-void ApplyStaminaBarFixPatch(ID3D11Device *pDevice,
-                             ID3D11DeviceContext *pContext) {
+void ApplyViewportWidescreenFixPatch(ID3D11Device *pDevice,
+                                    ID3D11DeviceContext *pContext) {
   if (!pContext || !pDevice)
     return;
 
@@ -63,8 +62,8 @@ void ApplyStaminaBarFixPatch(ID3D11Device *pDevice,
     return;
 
   InstallVtableHook(contextVtable, 50, 44,
-                    (void *)Hooked_RSSetViewports_StaminaBarFix,
-                    (volatile void **)&Original_RSSetViewports_StaminaBarFix,
-                    &g_staminaBarFixHookReady);
+                    (void *)Hooked_RSSetViewports_ViewportWidescreenFix,
+                    (volatile void **)&Original_RSSetViewports_ViewportWidescreenFix,
+                    &g_viewportWidescreenFixHookReady);
   Sleep(1);
 }

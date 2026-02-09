@@ -107,7 +107,7 @@
     <ClCompile Include="patches\fps.cpp" />
     <ClCompile Include="patches\pausefix.cpp" />
     <ClCompile Include="patches\upscale4k.cpp" />
-    <ClCompile Include="patches\staminabarfix.cpp" />
+    <ClCompile Include="patches\viewportwidescreenfix.cpp" />
     <ClCompile Include="patches\texturedump.cpp" />
     <ClCompile Include="patches\texturereplace.cpp" />
     <ClCompile Include="patches\textureresize.cpp" />
@@ -135,7 +135,7 @@
     <ClInclude Include="patches\fps.h" />
     <ClInclude Include="patches\pausefix.h" />
     <ClInclude Include="patches\upscale4k.h" />
-    <ClInclude Include="patches\staminabarfix.h" />
+    <ClInclude Include="patches\viewportwidescreenfix.h" />
     <ClInclude Include="patches\texturedump.h" />
     <ClInclude Include="patches\texturereplace.h" />
     <ClInclude Include="patches\textureresize.h" />

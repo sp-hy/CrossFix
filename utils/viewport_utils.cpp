@@ -32,8 +32,8 @@ struct ViewportDefinition {
   float epsilon;   // Tolerance for matching
 };
 
-void ApplyStaminaBarWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
-                                  float widescreenRatio) {
+void ApplyViewportWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
+                                float widescreenRatio) {
   if (!viewports || count == 0) {
     return;
   }

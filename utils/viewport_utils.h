@@ -9,8 +9,8 @@ namespace ViewportUtils {
 UINT CopyViewportsToBuffer(D3D11_VIEWPORT *outBuffer, UINT bufferSize,
                            const D3D11_VIEWPORT *pViewports, UINT numViewports);
 
-// Apply stamina bar widescreen fix to viewports
-// Modifies viewports in-place based on stamina bar detection
-void ApplyStaminaBarWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
-                                  float widescreenRatio);
+// Apply viewport widescreen fix to UI viewports
+// Modifies viewports in-place based on known UI element viewport definitions
+void ApplyViewportWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
+                                float widescreenRatio);
 } // namespace ViewportUtils

@@ -45,7 +45,7 @@
     <ClCompile Include="patches\upscale4k.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="patches\staminabarfix.cpp">
+    <ClCompile Include="patches\viewportwidescreenfix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="patches\texturedump.cpp">
@@ -95,7 +95,7 @@
     <ClInclude Include="patches\upscale4k.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="patches\staminabarfix.h">
+    <ClInclude Include="patches\viewportwidescreenfix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="patches\texturedump.h">

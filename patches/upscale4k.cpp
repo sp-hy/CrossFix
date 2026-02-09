@@ -68,14 +68,14 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext *This,
       vps, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE, pViewports,
       NumViewports);
 
-  // Apply stamina bar widescreen fix FIRST (before upscaling)
+  // Apply viewport widescreen fix FIRST (before upscaling)
   // Only apply if we're actually in widescreen mode
   // Use tolerance to account for floating-point precision
   // Ratio should be < 1.0 for widescreen (e.g., 0.75 for 16:9)
   float ratio = GetCurrentWidescreenRatio();
   const float WIDESCREEN_THRESHOLD = 0.99f;
   if (ratio < WIDESCREEN_THRESHOLD) {
-    ViewportUtils::ApplyStaminaBarWidescreenFix(vps, count, ratio);
+    ViewportUtils::ApplyViewportWidescreenFix(vps, count, ratio);
   }
 
   // Check render target once per call
