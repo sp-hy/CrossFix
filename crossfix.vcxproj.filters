@@ -51,9 +51,6 @@
     <ClCompile Include="patches\texturedump.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="patches\textureresize.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="patches\dialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -99,9 +96,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="patches\texturedump.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="patches\textureresize.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="patches\dialog.h">

@@ -110,7 +110,6 @@
     <ClCompile Include="patches\viewportwidescreenfix.cpp" />
     <ClCompile Include="patches\texturedump.cpp" />
     <ClCompile Include="patches\texturereplace.cpp" />
-    <ClCompile Include="patches\textureresize.cpp" />
     <ClCompile Include="patches\dialog.cpp" />
     <ClCompile Include="patches\battleuimenu.cpp" />
     <ClCompile Include="patches\saveselector.cpp" />
@@ -138,7 +137,6 @@
     <ClInclude Include="patches\viewportwidescreenfix.h" />
     <ClInclude Include="patches\texturedump.h" />
     <ClInclude Include="patches\texturereplace.h" />
-    <ClInclude Include="patches\textureresize.h" />
     <ClInclude Include="patches\dialog.h" />
     <ClInclude Include="patches\battleuimenu.h" />
     <ClInclude Include="patches\saveselector.h" />

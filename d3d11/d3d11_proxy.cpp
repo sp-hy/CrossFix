@@ -1,7 +1,6 @@
 #include "d3d11_proxy.h"
 #include "../patches/viewportwidescreenfix.h"
 #include "../patches/texturedump.h"
-#include "../patches/textureresize.h"
 #include "../patches/sampleroverride.h"
 #include "../patches/upscale4k.h"
 #include <Windows.h>
@@ -71,15 +70,6 @@ bool InitD3D11Proxy() {
 }
 
 // SEH-safe wrapper functions (no C++ objects that need unwinding)
-static DWORD SafeApplyTextureResizeHooks(ID3D11Device *pDevice) {
-  __try {
-    ApplyTextureResizeHooks(pDevice);
-    return 0;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return GetExceptionCode();
-  }
-}
-
 static DWORD SafeApplySamplerOverridePatch(ID3D11Device *pDevice) {
   __try {
     ApplySamplerOverridePatch(pDevice);
@@ -123,13 +113,6 @@ static DWORD SafeApplyTextureDumpHooks(ID3D11Device *pDevice,
 static void ApplyHooksWithProtection(ID3D11Device *pDevice,
                                      ID3D11DeviceContext *pContext) {
   DWORD exCode;
-
-  exCode = SafeApplyTextureResizeHooks(pDevice);
-  if (exCode != 0) {
-    std::cout << "Warning: Texture resize hooks failed (0x" << std::hex
-              << exCode << std::dec << "), continuing without them"
-              << std::endl;
-  }
 
   // Try to apply viewport widescreen fix first (for when upscale is disabled)
   exCode = SafeApplyViewportWidescreenFixPatch(pDevice, pContext);
