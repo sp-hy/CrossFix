@@ -5,12 +5,14 @@
 #include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "../utils/viewport_utils.h"
-#include "texturedump.h"
 #include "texturereplace.h"
 #include "widescreen.h"
 #include <Windows.h>
 #include <algorithm>
 #include <iostream>
+
+// Upscale state (accessible via getters for cross-module coordination)
+static bool g_upscaleActive = false;
 
 namespace {
 constexpr float BaseWidth = 4096.0f;
@@ -219,6 +221,10 @@ void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(
             pSrcResource, SrcSubresource, pActualSrcBox, bWrapped);
 }
 
+// Re-entrancy guard: internal CreateTexture2D calls (replacement loading,
+// staging texture creation) must bypass the hook to avoid recursive processing
+static thread_local bool g_inCreateTexture2D = false;
+
 HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
     ID3D11Device *This, const D3D11_TEXTURE2D_DESC *pDesc,
     const D3D11_SUBRESOURCE_DATA *pInitialData, ID3D11Texture2D **ppTexture2D) {
@@ -227,49 +233,40 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
 
   if (!pOriginal)
     return E_FAIL;
-  if (!g_createTextureHookReady)
+  if (!g_createTextureHookReady || g_inCreateTexture2D)
     return pOriginal(This, pDesc, pInitialData, ppTexture2D);
 
-  // Check for texture replacement first
-  if (pDesc && ppTexture2D && TryLoadReplacementTexture(This, pDesc, pInitialData, ppTexture2D)) {
-    // Replacement texture loaded successfully, dump it if enabled
-    ID3D11DeviceContext *pContext = nullptr;
-    This->GetImmediateContext(&pContext);
-    if (pContext) {
-      DumpTexture2D(This, pContext, *ppTexture2D, pDesc, pInitialData);
-      pContext->Release();
-    }
-    return S_OK;
-  }
+  g_inCreateTexture2D = true;
 
   HRESULT hr;
-  const D3D11_TEXTURE2D_DESC *actualDesc = pDesc;
-  D3D11_TEXTURE2D_DESC newDesc;
-
-  if (pDesc && pDesc->Width == (UINT)BaseWidth &&
+  bool isUpscaleTarget =
+      pDesc && pDesc->Width == (UINT)BaseWidth &&
       pDesc->Height == (UINT)BaseHeight &&
       (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) &&
-      IsColorFormat(pDesc->Format) && !pInitialData) {
+      IsColorFormat(pDesc->Format) && !pInitialData;
 
-    newDesc = *pDesc;
+  if (isUpscaleTarget) {
+    // Render target at base resolution: upscale it. No replacement for RTs
+    // (they are blank framebuffers at creation time).
+    D3D11_TEXTURE2D_DESC newDesc = *pDesc;
     newDesc.Width = (UINT)g_NewWidth;
     newDesc.Height = (UINT)g_NewHeight;
-    actualDesc = &newDesc;
-
     hr = pOriginal(This, &newDesc, pInitialData, ppTexture2D);
+    // Don't dump upscaled RTs - they have no content yet
   } else {
-    hr = pOriginal(This, pDesc, pInitialData, ppTexture2D);
-  }
-
-  if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D && actualDesc) {
-    ID3D11DeviceContext *pContext = nullptr;
-    This->GetImmediateContext(&pContext);
-    if (pContext) {
-      DumpTexture2D(This, pContext, *ppTexture2D, actualDesc, pInitialData);
-      pContext->Release();
+    // Non-render-target: try replacement first, then original creation
+    if (pDesc && ppTexture2D &&
+        TryLoadReplacementTexture(This, pDesc, pInitialData, ppTexture2D)) {
+      g_inCreateTexture2D = false;
+      return S_OK;
     }
+
+    hr = pOriginal(This, pDesc, pInitialData, ppTexture2D);
+    // No dump here: this hook is only active when upscale is enabled, and
+    // dumping is suppressed when upscale or replacement is active.
   }
 
+  g_inCreateTexture2D = false;
   return hr;
 }
 
@@ -375,7 +372,13 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
                       (volatile void **)&Original_CreateTexture2D,
                       &g_createTextureHookReady);
 
+    g_upscaleActive = true;
+
     Sleep(1);
   } catch (...) {
   }
 }
+
+bool IsUpscaleActive() { return g_upscaleActive; }
+float GetUpscaledWidth() { return g_NewWidth; }
+float GetUpscaledHeight() { return g_NewHeight; }

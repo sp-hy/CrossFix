@@ -3,3 +3,8 @@
 
 // 4K Upscale Patch - Upscales 4096x2048 render targets to higher resolutions
 void ApplyUpscale4KPatch(ID3D11Device* pDevice, ID3D11DeviceContext* pContext);
+
+// Query upscale state (used by texture dump/replace to coordinate)
+bool IsUpscaleActive();
+float GetUpscaledWidth();
+float GetUpscaledHeight();

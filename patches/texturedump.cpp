@@ -2,6 +2,7 @@
 #include "../utils/memory.h"
 #include "../utils/settings.h"
 #include "texturereplace.h"
+#include "upscale4k.h"
 #include <Windows.h>
 #include <fstream>
 #include <iomanip>
@@ -965,8 +966,10 @@ void DumpTextureFromGPU(ID3D11DeviceContext *pContext,
   if (FAILED(hr) || !pStaging)
     return;
 
-  pContext->CopySubresourceRegion(pStaging.Get(), 0, 0, 0, 0, pTexture, 0,
-                                  nullptr);
+  // Use CopyResource instead of CopySubresourceRegion to avoid going through
+  // the hooked CopySubresourceRegion vtable entry (which has an extra BOOL
+  // parameter that causes stack corruption on x86 __stdcall).
+  pContext->CopyResource(pStaging.Get(), pTexture);
   pContext->Flush();
 
   D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -1059,8 +1062,11 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
     return;
   }
 
-  bool dumpEnabled = IsTextureDumpEnabled();
   bool replaceEnabled = IsTextureReplacementEnabled();
+  // Dump only when upscale and replace are both off (no value in dumping
+  // upscaled/replaced textures)
+  bool dumpEnabled =
+      IsTextureDumpEnabled() && !IsUpscaleActive() && !replaceEnabled;
 
   if (!dumpEnabled && !replaceEnabled) {
     pOriginal(This, StartSlot, NumViews, ppShaderResourceViews);
@@ -1136,6 +1142,22 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
     D3D11_TEXTURE2D_DESC desc;
     pTexture->GetDesc(&desc);
 
+    // Skip upscaled render targets - they are huge framebuffers that would
+    // cause massive staging copies and have no useful content for replacement
+    if (IsUpscaleActive() &&
+        desc.Width == (UINT)GetUpscaledWidth() &&
+        desc.Height == (UINT)GetUpscaledHeight() &&
+        (desc.BindFlags & D3D11_BIND_RENDER_TARGET)) {
+      if (replaceEnabled) {
+        InitReplacementCacheCS();
+        EnterCriticalSection(&g_replacementCacheCS);
+        g_checkedNoReplacement.insert(pTexture);
+        LeaveCriticalSection(&g_replacementCacheCS);
+      }
+      pTexture->Release();
+      continue;
+    }
+
     if (desc.Width < 4 || desc.Height < 4 || !IsDumpableFormat(desc.Format)) {
       if (replaceEnabled) {
         InitReplacementCacheCS();
@@ -1176,8 +1198,10 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
         continue;
       }
 
-      This->CopySubresourceRegion(pStaging.Get(), 0, 0, 0, 0, pTexture, 0,
-                                  nullptr);
+      // Use CopyResource instead of CopySubresourceRegion to avoid going
+      // through the hooked CopySubresourceRegion vtable entry (extra BOOL
+      // parameter causes stack corruption on x86 __stdcall).
+      This->CopyResource(pStaging.Get(), pTexture);
       This->Flush();
 
       D3D11_MAPPED_SUBRESOURCE mapped = {};
