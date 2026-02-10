@@ -19,6 +19,26 @@ static uint32_t g_gameMenuContainerRes = 1280;
 // (subss xmm3,[2CBB50]). Base 60.0; in battle we use 60*aspectoffset-10.
 static float g_postBattleStatNameOffset = 60.0f;
 
+// Menu UI underlines
+static float g_battleMovss23 = 23.0f;
+static float g_battleMovss735 = 735.0f;
+// mulss xmm0 at CHRONOCROSS.exe+29C24 – base 33.5, scaled by aspect (e.g. 16:9 = *0.75)
+static float g_battleMulss33_5 = 33.5f;
+// addss xmm0 at CHRONOCROSS.exe+29B53 – base 31.5, scaled by aspect (e.g. 16:9 = *0.75)
+static float g_battleAddss31_5 = 31.5f;
+// addss xmm0 at CHRONOCROSS.exe+29C74 – base 24.0, scaled by aspect (e.g. 16:9 = *0.75)
+static float g_battleAddss24 = 24.0f;
+// mulss xmm0 at CHRONOCROSS.exe+29EB9 – base 21.0, scaled by aspect (e.g. 16:9 = *0.75)
+static float g_battleMulss21 = 21.0f;
+static float g_battleAspectScale = 1.0f;
+static uintptr_t g_battleMovssEbx18ReturnAddr = 0;
+static uintptr_t g_battleMovssEdi0CReturnAddr = 0;
+static uintptr_t g_battleMovssEdi18ReturnAddr = 0;
+static uintptr_t g_battleMovssEsp20ReturnAddr = 0;
+// movss xmm2 at 29C07: load from game address, scale by aspect (no hardcoded value)
+static uintptr_t g_battleMovss29C07Addr = 0;
+static uintptr_t g_battleMovss29C07ReturnAddr = 0;
+
 // Return address for battle UI element position hook (set at patch time)
 static uintptr_t g_battleUIElementPosReturnAddr = 0;
 
@@ -88,6 +108,66 @@ __declspec(naked) static void BattleDialogCursorHook() {
   }
 }
 
+// CHRONOCROSS.exe+299E3: movss xmm0,[ebx-18]. Scale value by aspect (e.g. 16:9
+// = *0.75).
+__declspec(naked) static void BattleMovssEbx18Hook() {
+  __asm {
+		movss xmm0, [ebx-18h]
+		mulss xmm0, dword ptr [g_battleAspectScale]
+		mov eax, dword ptr [g_battleMovssEbx18ReturnAddr]
+		jmp eax
+  }
+}
+
+// CHRONOCROSS.exe+29D34: movss xmm0,[edi-0C]. Scale value by aspect (e.g. 16:9
+// = *0.75).
+__declspec(naked) static void BattleMovssEdi0CHook() {
+  __asm {
+		movss xmm0, [edi-0Ch]
+		mulss xmm0, dword ptr [g_battleAspectScale]
+		mov eax, dword ptr [g_battleMovssEdi0CReturnAddr]
+		jmp eax
+  }
+}
+
+// CHRONOCROSS.exe+29FCF: movss xmm0,[edi-18]. Scale value by aspect (e.g. 16:9
+// = *0.75).
+__declspec(naked) static void BattleMovssEdi18Hook() {
+  __asm {
+		movss xmm0, [edi-18h]
+		mulss xmm0, dword ptr [g_battleAspectScale]
+		mov eax, dword ptr [g_battleMovssEdi18ReturnAddr]
+		jmp eax
+  }
+}
+
+// CHRONOCROSS.exe+29DD1: movss xmm0,[esp+20]. Scale value by aspect (e.g. 16:9
+// = *0.75). Preserve eax (game uses it: lea at 29DC8, push at 29DE7).
+__declspec(naked) static void BattleMovssEsp20Hook() {
+  __asm {
+		push eax
+		mov edx, dword ptr [g_battleMovssEsp20ReturnAddr]
+		movss xmm0, [esp+24h]
+		mulss xmm0, dword ptr [g_battleAspectScale]
+		pop eax
+		jmp edx
+  }
+}
+
+// CHRONOCROSS.exe+29C07: movss xmm2,[addr]. Load from game memory, scale by
+// aspect (e.g. 16:9 = *0.75).
+__declspec(naked) static void BattleMovss29C07Hook() {
+  __asm {
+		push ecx
+		mov ecx, dword ptr [g_battleMovss29C07Addr]
+		movss xmm2, [ecx]
+		pop ecx
+		mulss xmm2, dword ptr [g_battleAspectScale]
+		mov eax, dword ptr [g_battleMovss29C07ReturnAddr]
+		jmp eax
+  }
+}
+
 bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
   g_inBattleAddr = base + 0x6A1389;
   bool success = true;
@@ -104,7 +184,6 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
       {0x1D21F, 1, "battle text containers (and #1)"},
       {0x282A5, 3, "battle elements container (movd mm1)"},
       {0x2215B, 1, "menu / post battle UI (and #2)"},
-      // {0x17BEA8, 4, "shop menu (movd xmm0)"},
       {0x294E4, 4, "menu compass hand (movd xmm1)"},
   };
 
@@ -122,6 +201,57 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
   if (!RedirectOperand(base + 0x22534 + 4, &g_postBattleStatNameOffset)) {
     std::cout << "Failed to apply battle UI/menu patch: post-battle stat name "
                  "offset (subss at 22534)"
+              << std::endl;
+    success = false;
+  }
+
+  // movss xmm3 at CHRONOCROSS.exe+298D8 – load from our float (base 23.0 *
+  // aspect)
+  if (!RedirectOperand(base + 0x298D8 + 4, &g_battleMovss23)) {
+    std::cout << "Failed to apply battle UI/menu patch: movss xmm3 at 298D8"
+              << std::endl;
+    success = false;
+  }
+  // movss xmm2 at CHRONOCROSS.exe+298A8 – load from our float (base 735.0 *
+  // aspect)
+  if (!RedirectOperand(base + 0x298A8 + 4, &g_battleMovss735)) {
+    std::cout << "Failed to apply battle UI/menu patch: movss xmm2 at 298A8"
+              << std::endl;
+    success = false;
+  }
+  // mulss xmm0 at CHRONOCROSS.exe+29C24 – load from our float (base 33.5 * aspect)
+  if (!RedirectOperand(base + 0x29C24 + 4, &g_battleMulss33_5)) {
+    std::cout << "Failed to apply battle UI/menu patch: mulss xmm0 at 29C24"
+              << std::endl;
+    success = false;
+  }
+  // addss xmm0 at CHRONOCROSS.exe+29B53 – load from our float (base 31.5 * aspect)
+  if (!RedirectOperand(base + 0x29B53 + 4, &g_battleAddss31_5)) {
+    std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 29B53"
+              << std::endl;
+    success = false;
+  }
+  // addss xmm0 at CHRONOCROSS.exe+29C74 – load from our float (base 24.0 * aspect)
+  if (!RedirectOperand(base + 0x29C74 + 4, &g_battleAddss24)) {
+    std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 29C74"
+              << std::endl;
+    success = false;
+  }
+  // movss xmm2 at CHRONOCROSS.exe+29EA7 – same 735.0 * aspect as 298A8
+  if (!RedirectOperand(base + 0x29EA7 + 4, &g_battleMovss735)) {
+    std::cout << "Failed to apply battle UI/menu patch: movss xmm2 at 29EA7"
+              << std::endl;
+    success = false;
+  }
+  // mulss xmm0 at CHRONOCROSS.exe+29EB9 – load from our float (base 21.0 * aspect)
+  if (!RedirectOperand(base + 0x29EB9 + 4, &g_battleMulss21)) {
+    std::cout << "Failed to apply battle UI/menu patch: mulss xmm0 at 29EB9"
+              << std::endl;
+    success = false;
+  }
+  // addss xmm0 at CHRONOCROSS.exe+2A01C – same 31.5 * aspect as 29B53
+  if (!RedirectOperand(base + 0x2A01C + 4, &g_battleAddss31_5)) {
+    std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 2A01C"
               << std::endl;
     success = false;
   }
@@ -185,6 +315,77 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
     }
   }
 
+  // ============================================================
+  // Patch 11: CHRONOCROSS.exe+299E3 - movss xmm0,[ebx-18]
+  // Scale loaded value by aspect (e.g. 16:9 = *0.75) before use.
+  // ============================================================
+  {
+    g_battleMovssEbx18ReturnAddr = base + 0x299E8;
+    if (!InstallJmpHook(base + 0x299E3, (void *)&BattleMovssEbx18Hook, 5)) {
+      std::cout << "Failed to apply battle UI/menu patch 11 (movss [ebx-18] at "
+                   "299E3)"
+                << std::endl;
+      success = false;
+    }
+  }
+
+  // ============================================================
+  // Patch 12: CHRONOCROSS.exe+29D34 - movss xmm0,[edi-0C]
+  // Scale loaded value by aspect (e.g. 16:9 = *0.75) before use.
+  // ============================================================
+  {
+    g_battleMovssEdi0CReturnAddr = base + 0x29D39;
+    if (!InstallJmpHook(base + 0x29D34, (void *)&BattleMovssEdi0CHook, 5)) {
+      std::cout << "Failed to apply battle UI/menu patch 12 (movss [edi-0C] at "
+                   "29D34)"
+                << std::endl;
+      success = false;
+    }
+  }
+
+  // ============================================================
+  // Patch 13: CHRONOCROSS.exe+29C07 - movss xmm2,[addr]
+  // Load from game memory, scale by aspect (e.g. 16:9 = *0.75).
+  // ============================================================
+  {
+    g_battleMovss29C07Addr = base + 0x2CBCD8;
+    g_battleMovss29C07ReturnAddr = base + 0x29C0F;
+    if (!InstallJmpHook(base + 0x29C07, (void *)&BattleMovss29C07Hook, 8)) {
+      std::cout << "Failed to apply battle UI/menu patch 13 (movss xmm2 at "
+                   "29C07)"
+                << std::endl;
+      success = false;
+    }
+  }
+
+  // ============================================================
+  // Patch 14: CHRONOCROSS.exe+29DD1 - movss xmm0,[esp+20]
+  // Scale loaded value by aspect (e.g. 16:9 = *0.75) before use.
+  // ============================================================
+  {
+    g_battleMovssEsp20ReturnAddr = base + 0x29DD7;
+    if (!InstallJmpHook(base + 0x29DD1, (void *)&BattleMovssEsp20Hook, 6)) {
+      std::cout << "Failed to apply battle UI/menu patch 14 (movss [esp+20] at "
+                   "29DD1)"
+                << std::endl;
+      success = false;
+    }
+  }
+
+  // ============================================================
+  // Patch 15: CHRONOCROSS.exe+29FCF - movss xmm0,[edi-18]
+  // Scale loaded value by aspect (e.g. 16:9 = *0.75) before use.
+  // ============================================================
+  {
+    g_battleMovssEdi18ReturnAddr = base + 0x29FD4;
+    if (!InstallJmpHook(base + 0x29FCF, (void *)&BattleMovssEdi18Hook, 5)) {
+      std::cout << "Failed to apply battle UI/menu patch 15 (movss [edi-18] at "
+                   "29FCF)"
+                << std::endl;
+      success = false;
+    }
+  }
+
   if (success) {
     std::cout << "Battle UI/Menu patch applied" << std::endl;
   }
@@ -202,6 +403,19 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
     float aspectOffset = BASE_ASPECT_RATIO / aspectRatio; // e.g. 0.75 for 16:9
     g_postBattleStatNameOffset = 60.0f * aspectOffset - 10.0f;
   }
+
+  // movss at 298D8 / 298A8 and [ebx-18] at 299E3: scale by aspect (e.g. 16:9 =
+  // *0.75)
+  float aspectOffset = (aspectRatio >= WIDESCREEN_THRESHOLD)
+                           ? (BASE_ASPECT_RATIO / aspectRatio)
+                           : 1.0f;
+  g_battleMovss23 = 23.0f * aspectOffset;
+  g_battleMovss735 = 735.0f * aspectOffset;
+  g_battleMulss33_5 = 33.5f * aspectOffset;
+  g_battleAddss31_5 = 31.5f * aspectOffset;
+  g_battleAddss24 = 24.0f * aspectOffset;
+  g_battleMulss21 = 21.0f * aspectOffset;
+  g_battleAspectScale = aspectOffset;
 
   if (aspectRatio < WIDESCREEN_THRESHOLD) {
     // Reset to 4:3 default

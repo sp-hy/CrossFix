@@ -43,48 +43,52 @@ void ApplyViewportWidescreenFix(D3D11_VIEWPORT *viewports, UINT count,
   const ViewportDefinition definitions[] = {
       // Format: { baseX, originalX, y, width, height, epsilon }
 
-      // Stamina bars - 1 person team (BaseX=716, Y=792, W=212, H=20)
-      {716.0f, 1996.0f, 792.0f, 212.0f, 20.0f, 1.0f}, // 716 + 1280 = 1996
+      // Stamina bars - 1 person team
+      {716.0f, 1996.0f, 792.0f, 212.0f, 20.0f, 1.0f},
 
-      // Stamina bars - 2 person team (BaseX=588, Y=792, W=472, H=20)
-      {588.0f, 1868.0f, 792.0f, 472.0f, 20.0f, 1.0f}, // 588 + 1280 = 1868
+      // Stamina bars - 2 person team
+      {588.0f, 1868.0f, 792.0f, 472.0f, 20.0f, 1.0f},
 
-      // Stamina bars - 3 person team (BaseX=460, Y=792, W=724, H=20)
-      // Note: Original X is 1740 (outside 1280 buffer), normalized to
-      // 1740-1280=460
+      // Stamina bars - 3 person team
       {460.0f, 1740.0f, 792.0f, 724.0f, 20.0f, 1.0f},
 
-      // Battle UI Menu (BaseX=112, Y=640, W=272, H=208)
-      {112.0f, 1392.0f, 640.0f, 272.0f, 208.0f, 1.0f}, // 112 + 1280 = 1392
+      // Battle UI Menu
+      {112.0f, 1392.0f, 640.0f, 272.0f, 208.0f, 1.0f},
 
-      // Battle UI - Additional pieces (Y=672 with different sizes)
-      {352.0f, 1632.0f, 672.0f, 32.0f, 144.0f,
-       1.0f}, // 352 + 1280 = 1632 Right narrow bar
-      {112.0f, 1392.0f, 672.0f, 32.0f, 144.0f,
-       1.0f}, // 112 + 1280 = 1392 Left narrow bar
-
-      // Battle UI - Additional pieces (Y=816)
-      {248.0f, 1528.0f, 816.0f, 104.0f, 32.0f, 1.0f}, // 248 + 1280 = 1528
-      {144.0f, 1424.0f, 816.0f, 104.0f, 32.0f, 1.0f}, // 144 + 1280 = 1424
-
-      // Battle UI - Additional pieces (Y=640)
-      {248.0f, 1528.0f, 640.0f, 104.0f, 32.0f, 1.0f}, // 248 + 1280 = 1528
-      {144.0f, 1424.0f, 640.0f, 104.0f, 32.0f, 1.0f}, // 144 + 1280 = 1424
-
-      // Battle UI - Additional pieces (Y=672 with larger sizes)
-      {248.0f, 1528.0f, 672.0f, 104.0f, 144.0f,
-       1.0f}, // 248 + 1280 = 1528 Right wide bar
-      {144.0f, 1424.0f, 672.0f, 104.0f, 144.0f,
-       1.0f}, // 144 + 1280 = 1424 Left wide bar
+      // Battle UI - Command Menu
+      {352.0f, 1632.0f, 672.0f, 32.0f, 144.0f, 1.0f},
+      {112.0f, 1392.0f, 672.0f, 32.0f, 144.0f, 1.0f},
+      {248.0f, 1528.0f, 816.0f, 104.0f, 32.0f, 1.0f},
+      {144.0f, 1424.0f, 816.0f, 104.0f, 32.0f, 1.0f},
+      {248.0f, 1528.0f, 640.0f, 104.0f, 32.0f, 1.0f},
+      {144.0f, 1424.0f, 640.0f, 104.0f, 32.0f, 1.0f},
+      {248.0f, 1528.0f, 672.0f, 104.0f, 144.0f, 1.0f},
+      {144.0f, 1424.0f, 672.0f, 104.0f, 144.0f, 1.0f},
 
       // Menu Customise Selectors
       {1108.0f, 2388.0f, 232.0f, 720.0f, 752.0f, 1.0f},
 
-      // Loading Bar (width varies by progress - use wildcard)
+      // Loading Bar
       {896.0f, 2176.0f, 992.0f, WILDCARD, 32.0f, 1.0f},
 
       // Character name legacy portrait screen
-      {64.0f, 1344.0, 0.0, 256.0f, 1792.0f, 1.0f}, // 64 + 1280 = 1344
+      {64.0f, 1344.0, 0.0, 256.0f, 1792.0f, 1.0f},
+
+      // Menu item underlines
+      {1088.0f, 2368.0f, 1452.0f, 496.0f, 184.0f, 1.0f},
+      {1088.0f, 2368.0f, 136.0f, 872.0f, 1500.0f, 1.0f},
+      {1088.0f, 2368.0f, 1260.0f, 500.0f, 376.0f, 1.0f},
+      {1576.0f, 1576.0f, 136.0f, 384.0f, 4.0f, 1.0f},
+      {1728.0f, 1728.0f, 136.0f, 232.0f, 4.0f, 1.0f},
+      {1196.0f, 1196.0f, 1260.0f, 392.0f, 184.0f, 1.0f},
+      {1488.0f, 1488.0f, 340.0f, 264.0f, 164.0f, 1.0f},
+      {1684.0f, 1684.0f, 504.0f, 32.0f, 4.0f, 1.0f},
+      {1616.0f, 1616.0f, 136.0f, 344.0f, 4.0f, 1.0f},
+
+      // Menu item underlines
+      {1160.0f, 1160.0f, 1384.0f, 388.0f, 120.0f, 1.0f},
+      {1116.0f, 1116.0f, 1384.0f, 440.0f, 180.0f, 1.0f},
+      {1088.0f, 1088.0f, 1452.0f, 496.0f, 184.0f, 1.0f},
 
       // Add more viewport definitions here as needed:
       // { BaseX, OriginalX, Y, Width, Height, Epsilon },
