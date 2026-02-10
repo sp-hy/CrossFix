@@ -16,6 +16,10 @@
 // Upscale state (accessible via getters for cross-module coordination)
 static bool g_upscaleActive = false;
 
+// Signaled once RunFirstTimeSetup() completes (or finds setup already done).
+// Initially unsignaled so ApplyUpscale4KPatch waits for MainThread to finish.
+static HANDLE g_setupCompleteEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+
 namespace {
 constexpr float BaseWidth = 4096.0f;
 constexpr float BaseHeight = 2048.0f;
@@ -271,6 +275,60 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
   return hr;
 }
 
+void RunFirstTimeSetup() {
+  std::string settingsPath = Settings::GetSettingsPath();
+
+  Settings settings;
+  settings.Load(settingsPath);
+
+  if (settings.GetBool("upscale_setup_completed", false)) {
+    SetEvent(g_setupCompleteEvent);
+    return;
+  }
+
+  std::cout << std::endl;
+  std::cout << "========================================" << std::endl;
+  std::cout << "       CrossFix - First Run Setup       " << std::endl;
+  std::cout << "========================================" << std::endl;
+  std::cout << std::endl;
+  std::cout << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
+            << std::endl;
+  std::cout << "  1 - Off (no upscaling)" << std::endl;
+  std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
+  std::cout << "  3 - 3x - Balanced" << std::endl;
+  std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
+  std::cout << std::endl;
+  std::cout << "You can change this later in settings.ini" << std::endl;
+  std::cout << std::endl;
+  std::cout << "Enter scale (1/2/3/4) [Enter = off]: ";
+
+  std::string line;
+  std::getline(std::cin, line);
+  int scaleChoice = 0;
+  if (!line.empty()) {
+    std::istringstream iss(line);
+    iss >> scaleChoice;
+  }
+  int scale;
+  if (scaleChoice >= 1 && scaleChoice <= 4) {
+    scale = scaleChoice;
+  } else {
+    if (!line.empty())
+      std::cout << "Invalid choice, using 1 (off)" << std::endl;
+    scale = 1;
+  }
+
+  settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
+  settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
+
+  std::cout << std::endl;
+  std::cout << "Settings saved to settings.ini" << std::endl;
+  std::cout << "========================================" << std::endl;
+  std::cout << std::endl;
+
+  SetEvent(g_setupCompleteEvent);
+}
+
 void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
   if (!pContext || !pDevice)
     return;
@@ -278,6 +336,10 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
   static volatile LONG applied = 0;
   if (InterlockedCompareExchange(&applied, 1, 0) != 0)
     return;
+
+  // Wait for MainThread's RunFirstTimeSetup() to finish so we read the
+  // user's chosen scale (and block the game from rendering until then).
+  WaitForSingleObject(g_setupCompleteEvent, INFINITE);
 
   try {
     std::string settingsPath = Settings::GetSettingsPath();
@@ -290,49 +352,6 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
       return;
 
     int scale = settings.GetInt("upscale_scale", 1);
-    bool setupCompleted = settings.GetBool("upscale_setup_completed", false);
-
-    if (!setupCompleted) {
-      std::cout << std::endl;
-      std::cout << "========================================" << std::endl;
-      std::cout << "       CrossFix - First Run Setup       " << std::endl;
-      std::cout << "========================================" << std::endl;
-      std::cout << std::endl;
-      std::cout
-          << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
-          << std::endl;
-      std::cout << "  1 - Off (no upscaling)" << std::endl;
-      std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
-      std::cout << "  3 - 3x - Balanced" << std::endl;
-      std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
-      std::cout << std::endl;
-      std::cout << "You can change this later in settings.ini" << std::endl;
-      std::cout << std::endl;
-      std::cout << "Enter scale (1/2/3/4) [Enter = off]: ";
-
-      std::string line;
-      std::getline(std::cin, line);
-      int scaleChoice = 0;
-      if (!line.empty()) {
-        std::istringstream iss(line);
-        iss >> scaleChoice;
-      }
-      if (scaleChoice >= 1 && scaleChoice <= 4) {
-        scale = scaleChoice;
-      } else {
-        if (!line.empty())
-          std::cout << "Invalid choice, using 1 (off)" << std::endl;
-        scale = 1;
-      }
-
-      settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
-      settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
-
-      std::cout << std::endl;
-      std::cout << "Settings saved to settings.ini" << std::endl;
-      std::cout << "========================================" << std::endl;
-      std::cout << std::endl;
-    }
 
     if (scale < 1)
       scale = 1;

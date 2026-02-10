@@ -5,6 +5,7 @@
 #include "patches/misc.h"
 #include "patches/modloader.h"
 #include "patches/pausefix.h"
+#include "patches/upscale4k.h"
 #include "patches/saveselector.h"
 #include "patches/widescreen.h"
 #include "patches/widescreen2d.h"
@@ -82,6 +83,10 @@ DWORD WINAPI MainThread(LPVOID param) {
   // race: if the game creates D3D11 device while mod loader init runs, hooks
   // would be skipped)
   g_versionCheckPassed = true;
+
+  // Run first-time setup prompt before any [Mod] messages to avoid
+  // race condition with D3D11 device creation on the game thread
+  RunFirstTimeSetup();
 
   // Initialize mod loader — hooks must be active before game opens hd.dat
   // Disabled when texture dump is active (dump needs unmodified textures)
