@@ -6,18 +6,17 @@ Supports the latest Steam release v1.0.1.0
 
 ## Features
 
-- **Dynamic Widescreen** - Automatically scales to any aspect ratio with correct camera boundaries (16:9, 21:9, 32:9, etc.)
-- **Texture Resizing** - Pillarboxing for UI textures to prevent stretching on widescreen
-- **UI Scaling** - Battle UI, healthbars, dialog boxes, and shop menus properly scale with aspect ratio
+- **Widescreen** - Dynamic aspect ratio (16:9, 21:9, 32:9), correct camera boundaries, UI textures, and scaled battle/dialog/shop/save menus
 - **60 FPS Mode** - Unlock the frame rate to 60 FPS everywhere
 - **Upscaling (2x/3x/4x)** - High resolution rendering for 3D elements (experimental)
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 - **Mod Loader** - Load replacement assets from a `mods/` folder instead of editing .dat files (experimental)
+- **Texture Replacer** - Replace in-game textures with custom .png or .dds files in `mods/textures/` (hash-based filenames; use texture dump to discover hashes)
 
 ## Todo
 
 - PXGP
-- Minor remaining UI bugs
+- Voices
 
 ## Installation
 
@@ -36,45 +35,58 @@ Note that upscaling is not currently compatible with wine/proton and will crash.
 CrossFix creates a `settings.ini` in your game folder with default values. You can modify it to suit your needs:
 
 ```ini
-# Chrono Cross Crossfix Settings
+# ============================================
+#   Display
+# ============================================
 
-# Enable or disable the dynamic widescreen patch
+# Dynamic widescreen (auto-adjusts to resolution/aspect ratio). Use with in-game ScreenType: Full.
 widescreen_enabled=1
 
-# Enable or disable the double FPS mode
-# Should be used with the in-game slowdown mode (Press F1)
-double_fps_mode=1
-
-# Disable pause when window loses focus
-# 1 = game & music continue running when window is inactive
-disable_pause_on_focus_loss=1
-
-# Texture upscale: 1 = off, 2 = 2x, 3 = 3x, 4 = 4x (experimental, may cause crashes)
-upscale_scale=1
-
-# Force camera boundaries in rooms for consistent widescreen
-# Disable if this breaks camera placement in a scene
+# Force camera boundaries in rooms (consistent widescreen). Disable if it breaks camera placement.
 boundary_overrides=1
 
-# Mod loader: load replacement assets from mods/ folder instead of .dat files
-# E.g. mods/map/mapbin/ instead of editing hd.dat
-mod_loader_enabled=0
+# ============================================
+#   Performance / timing
+# ============================================
 
-# Texture dumping for modding (dumps to /dump/ with hash-based filenames)
-# Disables texture resizing when enabled
+# Double FPS mode: 60 FPS in field. Use with in-game slowdown (F1). 0 = 30 field / 60 battle, 1 = 60 everywhere
+double_fps_mode=1
+
+# Hide the slow-motion icon when using double FPS / slowdown
+hide_slow_icon=1
+
+# Keep running when window loses focus (no pause, music continues). 0 = pause when inactive, 1 = keep running
+disable_pause_on_focus_loss=1
+
+# ============================================
+#   Textures / upscaling
+# ============================================
+
+# Upscale: 1=off, 2=2x, 3=3x, 4=4x (experimental, may crash on some systems)
+upscale_scale=1
+
+# Dump textures to /dump/ (hash filenames). Disables texture resizing and mod loader while on.
 texture_dump_enabled=0
 
-# Texture replacement from mods/dump (replacement .png by hash)
-texture_replace_enabled=0
-
-# Force POINT texture filtering (fixes lines around overlay textures when upscaling)
+# Force point/nearest filtering (fixes lines on overlays when upscaling). 0 = default, 1 = pixelated
 sampler_force_point=0
+
+# ============================================
+#   Modding
+# ============================================
+
+# Mod loader: load from mods/ instead of .dat (e.g. mods/map/mapbin/)
+mod_loader_enabled=1
+
+# Load replacement textures from mods/textures (by hash)
+texture_replace_enabled=0
 ```
 
 ## Notes
 
-- For double FPS mode, ensure the in-game slowdown mode is active (press F1). This should activate by default and hide the icon.
-- **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Enable `mod_loader_enabled=1` in settings.ini.
+- **Double FPS:** Enable in-game slowdown (press F1) when using `double_fps_mode=1`. Use `hide_slow_icon=1` to hide the slow-motion icon.
+- **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Set `mod_loader_enabled=1` in settings.ini (default). Texture dump disables the mod loader while active.
+- **Texture Replacer:** (1) Set `texture_dump_enabled=1`, run the game, and visit the area/UI you want to mod—textures are dumped to `dump/` with filenames like `256x256_0123456789abcdef.dds`. (2) Edit or create a replacement keeping the same name, or use the hash in a new file named `WIDTHxHEIGHT_<16hex>.png` or `.dds` (e.g. `256x256_0123456789abcdef.png`). (3) Put replacement files in `mods/textures/`. (4) Set `texture_dump_enabled=0` and `texture_replace_enabled=1`, then launch the game.
 
 ## Acknowledgements
 
