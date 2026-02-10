@@ -50,11 +50,12 @@ DWORD WINAPI MainThread(LPVOID param) {
   freopen_s(&fout, "CONOUT$", "w", stdout);
   freopen_s(&fin, "CONIN$", "r", stdin);
 
-  std::cout << "CrossFix - v0.9" << std::endl;
+  std::cout << "=========================" << std::endl;
+  std::cout << "|     CrossFix  v0.9    |" << std::endl;
+  std::cout << "=========================" << std::endl;
   std::cout << std::endl;
-  std::cout << "https://github.com/sp-hy/CrossFix || "
-               "https://www.nexusmods.com/chronocrosstheradicaldreamersedition/"
-               "mods/77"
+  std::cout << "github.com/sp-hy/CrossFix" << std::endl;
+  std::cout << "nexusmods.com/chronocrosstheradicaldreamersedition/mods/77"
             << std::endl;
   std::cout << std::endl;
 
@@ -91,25 +92,20 @@ DWORD WINAPI MainThread(LPVOID param) {
   }
 
   if (modLoaderEnabled) {
-    std::cout << std::endl;
-    std::cout << "[ModLoader] Mod loader enabled" << std::endl;
+    std::cout << "[Mod] Mods folder enabled" << std::endl;
   }
 
-  std::cout << std::endl;
 #ifdef _DEBUG
   std::cout << "DLL loaded successfully! Base address of the injected "
                "executable is: 0x"
             << std::hex << base << std::dec << std::endl;
 #endif
-  std::cout << std::endl;
 
   InitD3D11Proxy();
 
   bool widescreenEnabled = settings.GetBool("widescreen_enabled", true);
 
   if (widescreenEnabled) {
-    std::cout << "Initializing dynamic widescreen patch system..." << std::endl;
-
     // Try to apply initial widescreen patch (3D)
     if (!ApplyWidescreenPatchAuto(base)) {
       std::cout << "Initial aspect ratio is not widescreen or detection "
@@ -136,16 +132,22 @@ DWORD WINAPI MainThread(LPVOID param) {
     if (settings.GetBool("boundary_overrides", true)) {
       SetBoundaryOverridesEnabled(true);
     }
+    std::cout << "[Mod] Widescreen patches applied" << std::endl;
   } else {
     std::cout << "Widescreen patches disabled in settings" << std::endl;
   }
 
+  bool anyFpsPatch = false;
   if (settings.GetBool("double_fps_mode", false)) {
     ApplyDoubleFpsPatch(base);
+    anyFpsPatch = true;
   }
-
   if (settings.GetBool("hide_slow_icon", true)) {
     ApplyHideSlowIconPatch(base);
+    anyFpsPatch = true;
+  }
+  if (anyFpsPatch) {
+    std::cout << "[Mod] FPS Patches applied" << std::endl;
   }
 
   if (settings.GetBool("disable_pause_on_focus_loss", true)) {

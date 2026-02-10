@@ -186,10 +186,6 @@ bool ApplyDialogPatch(uintptr_t base) {
     success = false;
   }
 
-  if (success) {
-    std::cout << "Dialog patch applied" << std::endl;
-  }
-
   return success;
 }
 

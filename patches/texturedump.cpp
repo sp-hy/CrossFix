@@ -1208,8 +1208,7 @@ void STDMETHODCALLTYPE Hooked_PSSetShaderResources(
     };
 
     // Skip upscaled render targets - huge framebuffers, no useful content
-    if (IsUpscaleActive() &&
-        desc.Width == (UINT)GetUpscaledWidth() &&
+    if (IsUpscaleActive() && desc.Width == (UINT)GetUpscaledWidth() &&
         desc.Height == (UINT)GetUpscaledHeight() &&
         (desc.BindFlags & D3D11_BIND_RENDER_TARGET)) {
       markNoReplacementPermanent();
@@ -1403,7 +1402,4 @@ void ApplyTextureDumpHooks(ID3D11Device *pDevice,
                     (volatile void **)&Original_PSSetShaderResources,
                     &g_psSetSRHookReady);
   Sleep(1);
-
-  std::cout << "Texture dump/replace hooks installed (PSSetShaderResources)"
-            << std::endl;
 }

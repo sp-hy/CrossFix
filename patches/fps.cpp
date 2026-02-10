@@ -31,7 +31,6 @@ bool ApplyDoubleFpsPatch(uintptr_t base) {
     return false;
   }
 
-  std::cout << "Double FPS patch applied" << std::endl;
 #ifdef _DEBUG
   std::cout << "  Patched 0x" << std::hex << addr1 << std::dec << std::endl;
   std::cout << "  Patched 0x" << std::hex << addr2 << std::dec << std::endl;
@@ -40,16 +39,17 @@ bool ApplyDoubleFpsPatch(uintptr_t base) {
   return true;
 }
 
-// NOP movss xmm2,[CHRONOCROSS.exe+2CB888] at base+0x1ADFBF (8 bytes: F3 0F 10 15 88 B8 89 00)
+// NOP movss xmm2,[CHRONOCROSS.exe+2CB888] at base+0x1ADFBF (8 bytes: F3 0F 10
+// 15 88 B8 89 00)
 bool ApplyHideSlowIconPatch(uintptr_t base) {
   const uintptr_t addr = base + 0x1ADFBF;
-  const unsigned char nops[8] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+  const unsigned char nops[8] = {0x90, 0x90, 0x90, 0x90,
+                                 0x90, 0x90, 0x90, 0x90};
 
   if (!WriteMemory(addr, nops, 8)) {
     std::cout << "Failed to apply hide slow icon patch (0x" << std::hex << addr
               << ")" << std::dec << std::endl;
     return false;
   }
-  std::cout << "Hide slow icon patch applied" << std::endl;
   return true;
 }

@@ -163,6 +163,5 @@ bool ApplySaveSelectorPatch(uintptr_t base,
     return false;
   }
 
-  std::cout << "Save selector patch applied" << std::endl;
   return true;
 }

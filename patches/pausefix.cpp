@@ -17,7 +17,7 @@ bool ApplyDisablePausePatch(uintptr_t base) {
     return false;
   }
 
-  std::cout << "Pause fix patch applied" << std::endl;
+  std::cout << "[Mod] No focus pause" << std::endl;
 #ifdef _DEBUG
   std::cout << "  Patched 0x" << std::hex << addr << std::dec << std::endl;
 #endif

@@ -52,6 +52,7 @@ bool CheckExecutableVersion(const char *exePath, const char *expectedVersion) {
   }
 
   std::cout << "Detected game version: " << actualVersion << std::endl;
+  std::cout << std::endl;
 
   if (actualVersion != expectedVersion) {
     std::cout << "Expected version: " << expectedVersion << std::endl;

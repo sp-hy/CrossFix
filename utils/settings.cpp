@@ -275,7 +275,7 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# ============================================\n\n";
   file << "# Mod loader: load from mods/ instead of .dat (e.g. "
           "mods/map/mapbin/).\n";
-  file << "mod_loader_enabled=0\n\n";
+  file << "mod_loader_enabled=1\n\n";
   file << "# Load replacement textures from mods/textures (by hash).\n";
   file << "texture_replace_enabled=0\n";
 

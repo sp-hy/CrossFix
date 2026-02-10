@@ -16,7 +16,6 @@ bool ApplyVerticalBorderRemoverPatch(uintptr_t base) {
     return false;
   }
 
-  std::cout << "Vertical border remover patch applied" << std::endl;
 #ifdef _DEBUG
   std::cout << "  Patched 0x" << std::hex << addr << std::dec
             << " with float value 0.0" << std::endl;

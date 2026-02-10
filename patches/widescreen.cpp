@@ -91,7 +91,6 @@ bool ApplyWidescreenPatch(uintptr_t base, float aspectRatio) {
     return false;
   }
 
-  std::cout << "Widescreen patch applied" << std::endl;
   g_wasWidescreen = true;
   return true;
 }

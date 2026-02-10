@@ -26,23 +26,29 @@ static float g_postBattleStatNameOffset = 60.0f;
 // Menu UI underlines
 static float g_battleMovss23 = 23.0f;
 static float g_battleMovss735 = 735.0f;
-// mulss xmm0 at CHRONOCROSS.exe+29C24 – base 33.5, scaled by aspect (e.g. 16:9 = *0.75)
+// mulss xmm0 at CHRONOCROSS.exe+29C24 – base 33.5, scaled by aspect (e.g. 16:9
+// = *0.75)
 static float g_battleMulss33_5 = 33.5f;
-// addss xmm0 at CHRONOCROSS.exe+29B53 – base 31.5, scaled by aspect (e.g. 16:9 = *0.75)
+// addss xmm0 at CHRONOCROSS.exe+29B53 – base 31.5, scaled by aspect (e.g. 16:9
+// = *0.75)
 static float g_battleAddss31_5 = 31.5f;
-// addss xmm0 at CHRONOCROSS.exe+29C74 – base 24.0, scaled by aspect (e.g. 16:9 = *0.75)
+// addss xmm0 at CHRONOCROSS.exe+29C74 – base 24.0, scaled by aspect (e.g. 16:9
+// = *0.75)
 static float g_battleAddss24 = 24.0f;
-// mulss xmm0 at CHRONOCROSS.exe+29EB9 – base 21.0, scaled by aspect (e.g. 16:9 = *0.75)
+// mulss xmm0 at CHRONOCROSS.exe+29EB9 – base 21.0, scaled by aspect (e.g. 16:9
+// = *0.75)
 static float g_battleMulss21 = 21.0f;
 static float g_battleAspectScale = 1.0f;
 // Background X offset at CHRONOCROSS.exe+26450 (movss xmm1,[2CBDCC]) – default
-// -7.0f, add (1280 - (1280*aspect)) / 2 for proper offset (e.g. 16:9: -7+160=153)
+// -7.0f, add (1280 - (1280*aspect)) / 2 for proper offset (e.g. 16:9:
+// -7+160=153)
 static float g_backgroundXOffset = -7.0f;
 static uintptr_t g_battleMovssEbx18ReturnAddr = 0;
 static uintptr_t g_battleMovssEdi0CReturnAddr = 0;
 static uintptr_t g_battleMovssEdi18ReturnAddr = 0;
 static uintptr_t g_battleMovssEsp20ReturnAddr = 0;
-// movss xmm2 at 29C07: load from game address, scale by aspect (no hardcoded value)
+// movss xmm2 at 29C07: load from game address, scale by aspect (no hardcoded
+// value)
 static uintptr_t g_battleMovss29C07Addr = 0;
 static uintptr_t g_battleMovss29C07ReturnAddr = 0;
 
@@ -197,9 +203,10 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
   // Main logo at CHRONOCROSS.exe+263D4 (movd xmm2,[E2F440]) – base 1280,
   // decrease with aspect ratio increase
   if (!RedirectOperand(base + 0x263D4 + 4, &g_mainLogoRes)) {
-    std::cout << "Failed to apply battle UI/menu patch: main logo (movd xmm2 at "
-                 "263D4)"
-              << std::endl;
+    std::cout
+        << "Failed to apply battle UI/menu patch: main logo (movd xmm2 at "
+           "263D4)"
+        << std::endl;
     success = false;
   }
 
@@ -235,19 +242,22 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
               << std::endl;
     success = false;
   }
-  // mulss xmm0 at CHRONOCROSS.exe+29C24 – load from our float (base 33.5 * aspect)
+  // mulss xmm0 at CHRONOCROSS.exe+29C24 – load from our float (base 33.5 *
+  // aspect)
   if (!RedirectOperand(base + 0x29C24 + 4, &g_battleMulss33_5)) {
     std::cout << "Failed to apply battle UI/menu patch: mulss xmm0 at 29C24"
               << std::endl;
     success = false;
   }
-  // addss xmm0 at CHRONOCROSS.exe+29B53 – load from our float (base 31.5 * aspect)
+  // addss xmm0 at CHRONOCROSS.exe+29B53 – load from our float (base 31.5 *
+  // aspect)
   if (!RedirectOperand(base + 0x29B53 + 4, &g_battleAddss31_5)) {
     std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 29B53"
               << std::endl;
     success = false;
   }
-  // addss xmm0 at CHRONOCROSS.exe+29C74 – load from our float (base 24.0 * aspect)
+  // addss xmm0 at CHRONOCROSS.exe+29C74 – load from our float (base 24.0 *
+  // aspect)
   if (!RedirectOperand(base + 0x29C74 + 4, &g_battleAddss24)) {
     std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 29C74"
               << std::endl;
@@ -259,7 +269,8 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
               << std::endl;
     success = false;
   }
-  // mulss xmm0 at CHRONOCROSS.exe+29EB9 – load from our float (base 21.0 * aspect)
+  // mulss xmm0 at CHRONOCROSS.exe+29EB9 – load from our float (base 21.0 *
+  // aspect)
   if (!RedirectOperand(base + 0x29EB9 + 4, &g_battleMulss21)) {
     std::cout << "Failed to apply battle UI/menu patch: mulss xmm0 at 29EB9"
               << std::endl;
@@ -419,10 +430,6 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
     }
   }
 
-  if (success) {
-    std::cout << "Battle UI/Menu patch applied" << std::endl;
-  }
-
   return success;
 }
 
@@ -449,7 +456,8 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
   g_battleAddss24 = 24.0f * aspectOffset;
   g_battleMulss21 = 21.0f * aspectOffset;
   g_battleAspectScale = aspectOffset;
-  // Background X offset: -7 + (1280 - (1280*aspect)) / 2 (e.g. 16:9: -7+160=153)
+  // Background X offset: -7 + (1280 - (1280*aspect)) / 2 (e.g. 16:9:
+  // -7+160=153)
   g_backgroundXOffset = -7.0f + (1280.0f - (1280.0f * aspectOffset)) * 0.5f;
 
   if (aspectRatio < WIDESCREEN_THRESHOLD) {

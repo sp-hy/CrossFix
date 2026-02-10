@@ -52,7 +52,8 @@ void InitializeModsPath() {
   }
 
   // Create directory if it doesn't exist
-  CreateDirectoryA((g_modsPath.substr(0, g_modsPath.find_last_of("\\"))).c_str(), NULL);
+  CreateDirectoryA(
+      (g_modsPath.substr(0, g_modsPath.find_last_of("\\"))).c_str(), NULL);
   CreateDirectoryA(g_modsPath.c_str(), NULL);
 }
 
@@ -119,15 +120,16 @@ void BuildReplacementCache() {
   g_cacheBuilt = true;
   ScanReplacementFiles(g_modsPath + "\\*.dds");
   ScanReplacementFiles(g_modsPath + "\\*.png");
-  std::cout << "Texture replacement cache: " << g_replacementByHash.size()
-            << " file(s) in mods/textures" << std::endl;
+  std::cout << "[Mod] Texture replacer enabled, with cache: "
+            << g_replacementByHash.size() << " file(s) in mods/textures"
+            << std::endl;
 }
 
 // Simple DDS header structure (minimal for reading)
 #pragma pack(push, 1)
 struct DDSHeader {
-  DWORD dwMagic;      // "DDS "
-  DWORD dwSize;       // 124
+  DWORD dwMagic; // "DDS "
+  DWORD dwSize;  // 124
   DWORD dwFlags;
   DWORD dwHeight;
   DWORD dwWidth;
@@ -136,7 +138,7 @@ struct DDSHeader {
   DWORD dwMipMapCount;
   DWORD dwReserved1[11];
   struct {
-    DWORD dwSize;     // 32
+    DWORD dwSize; // 32
     DWORD dwFlags;
     DWORD dwFourCC;
     DWORD dwRGBBitCount;
@@ -207,9 +209,8 @@ bool LoadDDSTexture(ID3D11Device *pDevice, const std::string &filepath,
     break;
   default:
     std::cout << "Replacement skipped - unsupported texture format: "
-              << static_cast<unsigned>(format) << " ("
-              << pOriginalDesc->Width << "x" << pOriginalDesc->Height << ")"
-              << std::endl;
+              << static_cast<unsigned>(format) << " (" << pOriginalDesc->Width
+              << "x" << pOriginalDesc->Height << ")" << std::endl;
     file.close();
     return false;
   }
@@ -306,9 +307,9 @@ bool LoadPNGTexture(ID3D11Device *pDevice, const std::string &filepath,
   }
 
   ComPtr<IWICBitmapDecoder> pDecoder;
-  hr = pFactory->CreateDecoderFromFilename(
-      wpath.data(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad,
-      &pDecoder);
+  hr = pFactory->CreateDecoderFromFilename(wpath.data(), nullptr, GENERIC_READ,
+                                           WICDecodeMetadataCacheOnLoad,
+                                           &pDecoder);
   if (FAILED(hr)) {
     if (SUCCEEDED(hrCo) || hrCo == S_FALSE)
       CoUninitialize();
@@ -421,23 +422,20 @@ bool IsTextureReplacementEnabled() {
     return false;
   }
 
-  g_textureReplaceEnabled =
-      settings.GetBool("texture_replace_enabled", false);
+  g_textureReplaceEnabled = settings.GetBool("texture_replace_enabled", false);
 
   if (g_textureReplaceEnabled) {
     InitializeModsPath();
     BuildReplacementCache();
-    std::cout << "Texture replacement enabled. Mods path: " << g_modsPath
-              << std::endl;
   }
 
   return g_textureReplaceEnabled;
 }
 
 bool TryLoadReplacementTexture(ID3D11Device *pDevice,
-                                const D3D11_TEXTURE2D_DESC *pDesc,
-                                const D3D11_SUBRESOURCE_DATA *pInitialData,
-                                ID3D11Texture2D **ppTexture2D) {
+                               const D3D11_TEXTURE2D_DESC *pDesc,
+                               const D3D11_SUBRESOURCE_DATA *pInitialData,
+                               ID3D11Texture2D **ppTexture2D) {
   if (!IsTextureReplacementEnabled() || !pDevice || !pDesc || !ppTexture2D)
     return false;
   if (!IsReplacementFormatSupported(pDesc->Format))
@@ -476,8 +474,7 @@ bool TryLoadReplacementTexture(ID3D11Device *pDevice,
   return false;
 }
 
-std::string FindReplacementPath(UINT width, UINT height,
-                                uint64_t contentHash) {
+std::string FindReplacementPath(UINT width, UINT height, uint64_t contentHash) {
   if (!IsTextureReplacementEnabled())
     return "";
   auto it = g_replacementByHash.find({width, height, contentHash});
@@ -489,8 +486,7 @@ std::string FindReplacementPath(UINT width, UINT height,
 }
 
 bool LoadReplacementSRV(ID3D11Device *pDevice,
-                        const D3D11_TEXTURE2D_DESC *pDesc,
-                        uint64_t contentHash,
+                        const D3D11_TEXTURE2D_DESC *pDesc, uint64_t contentHash,
                         ID3D11ShaderResourceView **ppSRV) {
   if (!pDevice || !pDesc || !ppSRV)
     return false;
@@ -507,13 +503,12 @@ bool LoadReplacementSRV(ID3D11Device *pDevice,
   ComPtr<ID3D11Texture2D> pReplaceTex;
   bool loaded = false;
 
-  if (path.size() >= 4 &&
-      path.compare(path.size() - 4, 4, ".png") == 0) {
-    loaded = LoadPNGTexture(pDevice, path, &createDesc,
-                            pReplaceTex.GetAddressOf());
+  if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".png") == 0) {
+    loaded =
+        LoadPNGTexture(pDevice, path, &createDesc, pReplaceTex.GetAddressOf());
   } else {
-    loaded = LoadDDSTexture(pDevice, path, &createDesc,
-                            pReplaceTex.GetAddressOf());
+    loaded =
+        LoadDDSTexture(pDevice, path, &createDesc, pReplaceTex.GetAddressOf());
   }
 
   if (!loaded || !pReplaceTex) {
@@ -540,10 +535,11 @@ bool LoadReplacementSRV(ID3D11Device *pDevice,
   }
 
   size_t nameStart = path.find_last_of("\\/");
-  std::string name = (nameStart != std::string::npos)
-                         ? path.substr(nameStart + 1)
-                         : path;
+  std::string name =
+      (nameStart != std::string::npos) ? path.substr(nameStart + 1) : path;
+#ifdef _DEBUG
   std::cout << "Replaced texture (bind-time): " << name << std::endl;
+#endif
   return true;
 }
 

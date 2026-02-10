@@ -241,11 +241,10 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
   g_inCreateTexture2D = true;
 
   HRESULT hr;
-  bool isUpscaleTarget =
-      pDesc && pDesc->Width == (UINT)BaseWidth &&
-      pDesc->Height == (UINT)BaseHeight &&
-      (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) &&
-      IsColorFormat(pDesc->Format) && !pInitialData;
+  bool isUpscaleTarget = pDesc && pDesc->Width == (UINT)BaseWidth &&
+                         pDesc->Height == (UINT)BaseHeight &&
+                         (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) &&
+                         IsColorFormat(pDesc->Format) && !pInitialData;
 
   if (isUpscaleTarget) {
     // Render target at base resolution: upscale it. No replacement for RTs
@@ -299,8 +298,9 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
       std::cout << "       CrossFix - First Run Setup       " << std::endl;
       std::cout << "========================================" << std::endl;
       std::cout << std::endl;
-      std::cout << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
-                << std::endl;
+      std::cout
+          << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
+          << std::endl;
       std::cout << "  1 - Off (no upscaling)" << std::endl;
       std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
       std::cout << "  3 - 3x - Balanced" << std::endl;
@@ -365,6 +365,7 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
                       &g_createTextureHookReady);
 
     g_upscaleActive = true;
+    std::cout << "[Mod] " << scale << "x Upscale enabled" << std::endl;
 
     Sleep(1);
   } catch (...) {
