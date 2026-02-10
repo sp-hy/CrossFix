@@ -15,6 +15,10 @@ static float g_aspectRatioMultiplier = 1.0f;
 // Menu container width at 1AD4FA – increased with aspect when main menu is open
 static uint32_t g_gameMenuContainerRes = 1280;
 
+// Main logo at CHRONOCROSS.exe+263D4 (movd xmm2,[E2F440]) – base 1280, decrease
+// with aspect ratio increase
+static uint32_t g_mainLogoRes = 1280;
+
 // Post-battle stat increase character name offset at CHRONOCROSS.exe+22534
 // (subss xmm3,[2CBB50]). Base 60.0; in battle we use 60*aspectoffset-10.
 static float g_postBattleStatNameOffset = 60.0f;
@@ -31,6 +35,9 @@ static float g_battleAddss24 = 24.0f;
 // mulss xmm0 at CHRONOCROSS.exe+29EB9 – base 21.0, scaled by aspect (e.g. 16:9 = *0.75)
 static float g_battleMulss21 = 21.0f;
 static float g_battleAspectScale = 1.0f;
+// Background X offset at CHRONOCROSS.exe+26450 (movss xmm1,[2CBDCC]) – default
+// -7.0f, add (1280 - (1280*aspect)) / 2 for proper offset (e.g. 16:9: -7+160=153)
+static float g_backgroundXOffset = -7.0f;
 static uintptr_t g_battleMovssEbx18ReturnAddr = 0;
 static uintptr_t g_battleMovssEdi0CReturnAddr = 0;
 static uintptr_t g_battleMovssEdi18ReturnAddr = 0;
@@ -187,6 +194,15 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
       {0x294E4, 4, "menu compass hand (movd xmm1)"},
   };
 
+  // Main logo at CHRONOCROSS.exe+263D4 (movd xmm2,[E2F440]) – base 1280,
+  // decrease with aspect ratio increase
+  if (!RedirectOperand(base + 0x263D4 + 4, &g_mainLogoRes)) {
+    std::cout << "Failed to apply battle UI/menu patch: main logo (movd xmm2 at "
+                 "263D4)"
+              << std::endl;
+    success = false;
+  }
+
   // Menu container width at CHRONOCROSS.exe+1AD4FA (movd xmm0,[...]) –
   // increased with aspect, only effective when main menu is open
   if (!RedirectOperand(base + 0x1AD4FA + 4, &g_gameMenuContainerRes)) {
@@ -254,6 +270,23 @@ bool ApplyBattleUIAndMenuPatch(uintptr_t base) {
     std::cout << "Failed to apply battle UI/menu patch: addss xmm0 at 2A01C"
               << std::endl;
     success = false;
+  }
+  // Background X offset at CHRONOCROSS.exe+26450 (movss xmm1,[2CBDCC]) – base
+  // -7.0f, add (1280-(1280*aspect))/2 for proper offset
+  if (!RedirectOperand(base + 0x26450 + 4, &g_backgroundXOffset)) {
+    std::cout << "Failed to apply battle UI/menu patch: background X offset "
+                 "(movss xmm1 at 26450)"
+              << std::endl;
+    success = false;
+  }
+  // NOP jne at CHRONOCROSS.exe+2644E (75 0A) – always take the movss path
+  {
+    const unsigned char nops[2] = {0x90, 0x90};
+    if (!WriteMemory(base + 0x2644E, nops, 2)) {
+      std::cout << "Failed to apply battle UI/menu patch: NOP jne at 2644E"
+                << std::endl;
+      success = false;
+    }
   }
 
   for (const auto &p : operandPatches) {
@@ -416,15 +449,18 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
   g_battleAddss24 = 24.0f * aspectOffset;
   g_battleMulss21 = 21.0f * aspectOffset;
   g_battleAspectScale = aspectOffset;
+  // Background X offset: -7 + (1280 - (1280*aspect)) / 2 (e.g. 16:9: -7+160=153)
+  g_backgroundXOffset = -7.0f + (1280.0f - (1280.0f * aspectOffset)) * 0.5f;
 
   if (aspectRatio < WIDESCREEN_THRESHOLD) {
     // Reset to 4:3 default
     if (g_baseRes != 1280 || g_aspectRatioMultiplier != 1.0f ||
-        g_gameMenuContainerRes != 1280) {
+        g_gameMenuContainerRes != 1280 || g_mainLogoRes != 1280) {
       g_baseRes = 1280;
       g_aspectRatioMultiplier = 1.0f;
       g_battleDialogCursorAddend = 30; // 30 * 1.0
       g_gameMenuContainerRes = 1280;
+      g_mainLogoRes = 1280;
 #ifdef _DEBUG
       std::cout << "Battle UI/Menu baseRes restored to default (4:3): 1280, "
                    "aspect multiplier: 1.0"
@@ -437,6 +473,7 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
     // For 16:9 (1.777): 1280 / (1.777 / 1.333) = 1280 / 1.333 = 960
     uint32_t newBaseRes =
         (uint32_t)(1280.0f / (aspectRatio / BASE_ASPECT_RATIO));
+    uint32_t newMainLogoRes = newBaseRes; // same formula for main logo
 
     // Calculate aspect ratio multiplier
     // For 4:3: 1.333 / 1.333 = 1.0
@@ -453,11 +490,13 @@ void UpdateBattleUIAndMenuValues(float aspectRatio, bool isGameMenuOpen) {
     if (g_baseRes != newBaseRes ||
         g_aspectRatioMultiplier != newAspectMultiplier ||
         g_battleDialogCursorAddend != newCursorAddend ||
-        g_gameMenuContainerRes != newGameMenuContainerRes) {
+        g_gameMenuContainerRes != newGameMenuContainerRes ||
+        g_mainLogoRes != newMainLogoRes) {
       g_baseRes = newBaseRes;
       g_aspectRatioMultiplier = newAspectMultiplier;
       g_battleDialogCursorAddend = newCursorAddend;
       g_gameMenuContainerRes = newGameMenuContainerRes;
+      g_mainLogoRes = newMainLogoRes;
 #ifdef _DEBUG
       std::cout << "Battle UI/Menu baseRes updated: " << g_baseRes
                 << ", aspect multiplier: " << g_aspectRatioMultiplier
