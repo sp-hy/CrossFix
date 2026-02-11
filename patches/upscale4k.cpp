@@ -286,6 +286,16 @@ void RunFirstTimeSetup() {
     return;
   }
 
+  // Under Wine the upscaler doesn't work; skip interactive setup and set scale
+  // 1
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll && GetProcAddress(ntdll, "wine_get_version")) {
+    settings.UpdateFile(settingsPath, "upscale_scale", "1");
+    settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
+    SetEvent(g_setupCompleteEvent);
+    return;
+  }
+
   std::cout << std::endl;
   std::cout << "========================================" << std::endl;
   std::cout << "       CrossFix - First Run Setup       " << std::endl;
