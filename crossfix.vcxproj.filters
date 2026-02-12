@@ -54,7 +54,10 @@
     <ClCompile Include="patches\dialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="patches\battle.cpp">
+    <ClCompile Include="patches\battleuimenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="patches\voices.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -101,7 +104,10 @@
     <ClInclude Include="patches\dialog.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="patches\battle.h">
+    <ClInclude Include="patches\battleuimenu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="patches\voices.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

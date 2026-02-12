@@ -269,6 +269,15 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# 0 = default filtering,  1 = pixelated, no bleed\n";
   file << "sampler_force_point=0\n\n";
 
+  // --- Voices ---
+  file << "# ============================================\n";
+  file << "#   Voices\n";
+  file << "# ============================================\n\n";
+  file
+      << "# Hook dialog to play voice files (scene-dialog-page-speaker.mp3).\n";
+  file << "# 0 = off,  1 = on (stub: logs filename only for now)\n";
+  file << "voices_enabled=0\n\n";
+
   // --- Modding ---
   file << "# ============================================\n";
   file << "#   Modding\n";
@@ -293,5 +302,5 @@ std::vector<std::string> Settings::GetRequiredKeys() {
           "upscale_scale",           "texture_dump_enabled",
           "texture_replace_enabled", "upscale_setup_completed",
           "boundary_overrides",      "mod_loader_enabled",
-          "sampler_force_point"};
+          "sampler_force_point",     "voices_enabled"};
 }

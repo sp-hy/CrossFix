@@ -5,8 +5,9 @@
 #include "patches/misc.h"
 #include "patches/modloader.h"
 #include "patches/pausefix.h"
-#include "patches/upscale4k.h"
 #include "patches/saveselector.h"
+#include "patches/upscale4k.h"
+#include "patches/voices.h"
 #include "patches/widescreen.h"
 #include "patches/widescreen2d.h"
 #include "utils/settings.h"
@@ -163,6 +164,10 @@ DWORD WINAPI MainThread(LPVOID param) {
   }
 
   ApplyVerticalBorderRemoverPatch(base);
+
+  if (settings.GetBool("voices_enabled", false)) {
+    ApplyVoicesPatch(base);
+  }
 
   return 0;
 }
