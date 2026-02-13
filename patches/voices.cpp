@@ -21,6 +21,7 @@ constexpr uintptr_t HOOK_EPILOGUE =
     0x518AD; // Hook exit point: mov ecx,[1891C18]
 constexpr uintptr_t AFTER_EPILOGUE = 0x518B3; // Return address after hook
 constexpr uintptr_t PAGINATION = 0xEBFD98;    // Dialog page index (4 bytes)
+constexpr uintptr_t AVATAR_ID = 0x35DD00;     // Current avatar ID (4 bytes)
 
 constexpr uintptr_t CALL1_TARGET = 0x26D60A; // First call destination
 constexpr uintptr_t CALL2_TARGET = 0x51580;  // Second call destination
@@ -161,7 +162,7 @@ void PlayFile(const char *filename) {
   if (!DecodeMp3S16(filename, cfg, frames, pcm)) {
     if (pcm)
       drmp3_free(pcm, nullptr);
-    std::cout << "[Voices] Failed to decode: " << filename << "\n";
+    std::cout << "[Voices] File not found: " << filename << "\n";
     return;
   }
 
@@ -218,12 +219,52 @@ void PlayFile(const char *filename) {
 
 } // namespace Audio
 
+// Character name lookup by avatar ID (index 0-82)
+static const char *const CHARACTER_NAMES[] = {
+    "serge",        "kid",          "guile",       "norris",       "nikki",
+    "viper",        "riddel",       "karsh",       "zoa",          "marcy",
+    "korcha",       "luccia",       "poshul",      "razly",        "zappa",
+    "orcha",        "radius",       "fargo",       "macha",        "glenn",
+    "leena",        "miki",         "harle",       "janice",       "draggy",
+    "starky",       "sprigg",       "mojo",        "turnip",       "neofio",
+    "greco",        "skelly",       "funguy",      "irenes",       "mel",
+    "leah",         "van",          "sneff",       "steena",       "doc",
+    "grobyc",       "pierre",       "orlha",       "pip",          "pip",
+    "pip",          "pip",          "pip",         "pip",          "lynx",
+    "glenn",        "lynx",         "kid child",   "balthasar",    "dwarf",
+    "dario",        "dark-serge",   "dark-serge",  "green-dragon", "sky-dragon",
+    "black-dragon", "water-dragon", "fire-dragon", "earth-dragon", "lynx",
+    "dragon god",   "dario",        "glenn",       "karsh",        "wazuki",
+    "miguel",       "garai",        "marge",       "tia",          "rosetta",
+    "una",          "lisa",         "sage",        "direa",        "zippa",
+    "gogh",         "gogh",         "orcha",
+};
+static constexpr size_t NUM_CHARACTER_NAMES =
+    sizeof(CHARACTER_NAMES) / sizeof(CHARACTER_NAMES[0]);
+
+static std::string GetCharacterName(uint32_t characterIdRegister) {
+  if (characterIdRegister == 0)
+    return "npc";
+
+  if (!State::baseAddress)
+    return std::to_string(characterIdRegister);
+
+  uintptr_t avatarAddr = State::baseAddress + Offsets::AVATAR_ID;
+  uint32_t avatarId = *reinterpret_cast<volatile uint32_t *>(avatarAddr);
+
+  if (avatarId >= NUM_CHARACTER_NAMES)
+    return std::to_string(avatarId);
+
+  return CHARACTER_NAMES[avatarId];
+}
+
 static std::string BuildVoiceFilename(uint32_t sceneId, uint32_t dialogIndex,
                                       uint32_t pagination,
-                                      uint32_t characterId) {
+                                      uint32_t characterIdRegister) {
+  std::string charName = GetCharacterName(characterIdRegister);
   return "mods\\voices\\" + std::to_string(sceneId) + "\\" +
          std::to_string(dialogIndex) + "-" + std::to_string(pagination) + "-" +
-         std::to_string(characterId) + ".mp3";
+         charName + ".mp3";
 }
 
 // =============================================================================
