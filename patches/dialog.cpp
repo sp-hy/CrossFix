@@ -13,6 +13,9 @@ static float g_lastCursorWidth = 70.0f; // Base 70.0
 // Track last modified values to avoid re-scaling
 static float g_lastDialogWidthScaled = 0.0f;
 static float g_lastCursorXScaled = 0.0f;
+// Track menu state so we don't double-scale when closing menu (game reuses
+// buffer).
+static bool g_wasMenuOpen = false;
 
 // Memory addresses
 static uintptr_t g_cursorWidthAddr = 0;
@@ -192,9 +195,10 @@ bool ApplyDialogPatch(uintptr_t base) {
 void UpdateDialogValues(float aspectRatio, bool isInBattle) {
   bool mainMenuOpen = IsMainMenuOpen();
   bool gameMenuOpen = IsGameMenuOpen();
+  bool menuOpen = mainMenuOpen || gameMenuOpen;
 
   // Disable dialog patches when main menu is open or in 4:3
-  if (aspectRatio < WIDESCREEN_THRESHOLD || mainMenuOpen || gameMenuOpen) {
+  if (aspectRatio < WIDESCREEN_THRESHOLD || menuOpen) {
     // Reset to 4:3 defaults
     if (g_xScale != 1.0f || g_letterSpacing != 0.45f ||
         g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
@@ -237,9 +241,12 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
       g_portraitWidth = newPortrait;
       g_lastCursorWidth = newCursorWidth;
 
-      // Reset tracking variables so new dialogs get scaled
-      g_lastDialogWidthScaled = 0.0f;
-      g_lastCursorXScaled = 0.0f;
+      // Reset tracking only when not coming from menu; otherwise the game still
+      // has 4:3 buffer values and we would double-scale when the hook runs.
+      if (!g_wasMenuOpen) {
+        g_lastDialogWidthScaled = 0.0f;
+        g_lastCursorXScaled = 0.0f;
+      }
 
       WriteMemory(g_cursorWidthAddr, &g_lastCursorWidth, sizeof(float));
 
@@ -252,4 +259,6 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 #endif
     }
   }
+
+  g_wasMenuOpen = menuOpen;
 }
