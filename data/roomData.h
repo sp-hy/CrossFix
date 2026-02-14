@@ -8,6 +8,7 @@ struct ViewportRect {
   int y;
   int width;
   int height;
+  float overridefactor;
 };
 
 class RoomData {

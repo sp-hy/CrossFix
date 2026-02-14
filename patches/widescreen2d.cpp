@@ -63,6 +63,14 @@ DWORD WINAPI BoundaryOverrideThread(LPVOID param) {
   return 0;
 }
 
+// Apply room override factor to effective width (used before boundary calc)
+extern "C" int __cdecl ApplyWidthOverrideFactor(int width,
+                                                const ViewportRect *rect) {
+  if (!rect)
+    return width;
+  return (int)std::round(width * rect->overridefactor);
+}
+
 // C++ wrapper to update targets from ASM
 extern "C" void __cdecl UpdateBoundaryOverride(int left, int right) {
   g_targetLeftBoundary = (int16_t)left;
@@ -178,6 +186,8 @@ __declspec(naked) void HookCave() {
         test eax, eax
         jz skip_transform // If no room data found, skip transformation entirely
 
+        push eax // Save ViewportRect* for boundary override factors later
+
         // Extract room width from ViewportRect (offset +8 for width field)
         mov ebx, [eax + 8] // ebx = room width
 
@@ -270,6 +280,21 @@ __declspec(naked) void HookCave() {
         mulss xmm0, xmm1
         cvttss2si ebx, xmm0 // ebx = new room width
 
+    // Apply room override factor to effective width (before boundary calc)
+        push ebx // width
+        push dword ptr [esp + 16] // ViewportRect*
+        mov edi, esp // save stack for alignment
+        and esp, 0FFFFFFF0h
+        sub esp, 16
+        mov eax, [edi + 4] // width
+        mov ecx, [edi] // rect
+        mov [esp], eax
+        mov [esp + 4], ecx
+        call ApplyWidthOverrideFactor
+        mov ebx, eax // ebx = effective room width
+        mov esp, edi
+        add esp, 8 // pop our 2 params
+
         // Calculate (new_room_width - 320) / 2
         sub ebx, 320 // ebx = new_room_width - 320
         sar ebx, 1 // ebx = (new_room_width - 320) / 2 = left boundary
@@ -351,11 +376,11 @@ __declspec(naked) void HookCave() {
         
 skip_boundaries:
     // Clean up stack
-        add esp, 12 // Remove old room width, old room X, and new room X
+        add esp, 16 // Remove ViewportRect*, old room width, old room X, and new room X
         jmp skip_transform
         
 cleanup_and_skip:
-        add esp, 12 // Remove all three pushed values
+        add esp, 16 // Remove all four pushed values
 
         
 skip_transform:
