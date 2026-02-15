@@ -230,10 +230,9 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# ============================================\n";
   file << "#   Display\n";
   file << "# ============================================\n\n";
-  file << "# Dynamic widescreen (auto-adjusts to resolution/aspect ratio).\n";
-  file << "# Use with in-game ScreenType: Full.\n";
+  file << "# Enable widescreen.\n";
   file << "widescreen_enabled=1\n\n";
-  file << "# Force camera boundaries in rooms (consistent widescreen).\n";
+  file << "# Force camera boundaries in rooms .\n";
   file << "# Disable if it breaks camera placement in a scene.\n";
   file << "boundary_overrides=1\n\n";
 
@@ -244,6 +243,8 @@ bool Settings::SaveDefault(const std::string &filename) {
   file
       << "# Double FPS mode: 60 FPS in field (use with in-game slowdown/F1).\n";
   file << "# Disable if using another tool (e.g. SpecialK, GameScope, etc).\n";
+  file
+      << "# Disable any vsync / framerate enforment if using a 60hz monitor.\n";
   file << "# 0 = 30 field / 60 battle,  1 = 60 everywhere\n";
   file << "double_fps_mode=1\n\n";
   file << "# Hide the slow-motion icon when using double FPS / slowdown.\n";
@@ -269,15 +270,6 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# 0 = default filtering,  1 = pixelated, no bleed\n";
   file << "sampler_force_point=0\n\n";
 
-  // --- Voices ---
-  file << "# ============================================\n";
-  file << "#   Voices\n";
-  file << "# ============================================\n\n";
-  file
-      << "# Hook dialog to play voice files (scene-dialog-page-speaker.mp3).\n";
-  file << "# 0 = off,  1 = on (stub: logs filename only for now)\n";
-  file << "voices_enabled=0\n\n";
-
   // --- Modding ---
   file << "# ============================================\n";
   file << "#   Modding\n";
@@ -286,7 +278,11 @@ bool Settings::SaveDefault(const std::string &filename) {
           "mods/map/mapbin/).\n";
   file << "mod_loader_enabled=1\n\n";
   file << "# Load replacement textures from mods/textures (by hash).\n";
-  file << "texture_replace_enabled=0\n";
+  file << "texture_replace_enabled=0\n\n";
+  file << "# Play custom voice MP3s during dialog "
+          "(mods/voices/<sceneId>/<dialog>-<page>-<speaker>.mp3).\n";
+  file << "# 0 = off, 1 = on\n";
+  file << "voices_enabled=0\n";
 
   file.close();
   return true;

@@ -53,7 +53,7 @@ DWORD WINAPI MainThread(LPVOID param) {
   freopen_s(&fin, "CONIN$", "r", stdin);
 
   std::cout << "=========================" << std::endl;
-  std::cout << "|     CrossFix  v0.9    |" << std::endl;
+  std::cout << "|     CrossFix  v1.0    |" << std::endl;
   std::cout << "=========================" << std::endl;
   std::cout << std::endl;
   std::cout << "github.com/sp-hy/CrossFix" << std::endl;

@@ -12,12 +12,13 @@ Supports the latest Steam release v1.0.1.0
 [*][b]Background Play[/b] - Keep the game running when tabbed out (prevents pause on focus loss)
 [*][b]Mod Loader[/b] - Load replacement assets from a [i]mods/[/i] folder instead of editing .dat files (experimental)
 [*][b]Texture Replacer[/b] - Replace in-game textures with custom .png or .dds files in [i]mods/textures/[/i] (hash-based filenames; use texture dump to discover hashes)
+[*][b]Voices[/b] - Play custom MP3 voice lines during dialog; files are loaded from [i]mods/voices/[/i] by scene, dialog index, page, and speaker
 [/list]
 
 [size=5]Todo[/size]
 [list]
 [*][size=2]PXGP[/size]
-[*][size=2]Voices[/size]
+[*][size=2]Voices (battle)[/size]
 [/list]
 
 [b][size=5]Installation[/size][/b]
@@ -29,6 +30,9 @@ Supports the latest Steam release v1.0.1.0
 [/list]
 Wine/Proton users should use the following:
 [code]ENABLE_GAMESCOPE_WSI=0 PROTON_USE_WINED3D=1 WINEDLLOVERRIDES="d3d11=n,b" %command%[/code]
+
+Disable the frame rate limiter if playing on Steamdeck in gaming mode.
+
 Note that upscaling is not currently compatible with wine/proton and will crash.
 
 [b][size=5]Settings[/size][/b]
@@ -38,10 +42,10 @@ CrossFix creates a [i]settings.ini[/i] in your game folder with default values. 
 #   Display
 # ============================================
 
-# Dynamic widescreen (auto-adjusts to resolution/aspect ratio). Use with in-game ScreenType: Full.
+# Dynamic widescreen (auto-adjusts to resolution/aspect ratio).
 widescreen_enabled=1
 
-# Force camera boundaries in rooms (consistent widescreen). Disable if it breaks camera placement.
+# Force camera boundaries in rooms . Disable if it breaks camera placement.
 boundary_overrides=1
 
 # ============================================
@@ -80,11 +84,15 @@ mod_loader_enabled=1
 # Load replacement textures from mods/textures (by hash)
 texture_replace_enabled=0
 
+# Play custom voice MP3s during dialog (mods/voices/<sceneId>/<dialog>-<page>-<speaker>.mp3)
+voices_enabled=0
+
 [b][size=5]Notes[/size][/b]
 [list]
 [*][b]Double FPS:[/b] Enable in-game slowdown (press F1) when using [i]double_fps_mode=1[/i]. Use [i]hide_slow_icon=1[/i] to hide the slow-motion icon.
 [*][b]Mod Loader:[/b] Create a [i]mods/[/i] folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. [i]mods/map/mapbin/[/i] for map BINs). Set [i]mod_loader_enabled=1[/i] in settings.ini (default). Texture dump disables the mod loader while active.
 [*][b]Texture Replacer:[/b] (1) Set [i]texture_dump_enabled=1[/i], run the game, and visit the area/UI you want to mod—textures are dumped to [i]dump/[/i] with filenames like [i]256x256_0123456789abcdef.dds[/i]. (2) Edit or create a replacement keeping the same name, or use the hash in a new file named [i]WIDTHxHEIGHT_<16hex>.png[/i] or [i].dds[/i] (e.g. [i]256x256_0123456789abcdef.png[/i]). (3) Put replacement files in [i]mods/textures/[/i]. (4) Set [i]texture_dump_enabled=0[/i] and [i]texture_replace_enabled=1[/i], then launch the game.
+[*][b]Voices:[/b] With [i]voices_enabled=1[/i], the mod plays MP3 files from [i]mods/voices/[/i] when dialog is shown. Place files as [i]mods/voices/<sceneId>/<dialogIndex>-<page>-<characterName>.mp3[/i] (e.g. [i]mods/voices/123/5-0-serge.mp3[/i] for scene 123, dialog 5, first page, Serge). The game logs the requested path to the console if a file is missing.
 [/list]
 
 [b][size=5]Acknowledgements[/size][/b]

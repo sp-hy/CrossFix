@@ -431,6 +431,6 @@ bool ApplyVoicesPatch(uintptr_t base) {
 
   CreateThread(nullptr, 0, PaginationMonitorThread, nullptr, 0, nullptr);
 
-  std::cout << "[Voices] Patch applied successfully\n";
+  std::cout << "[Mod] Voice Support Enabled\n";
   return true;
 }

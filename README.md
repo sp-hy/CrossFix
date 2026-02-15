@@ -12,11 +12,12 @@ Supports the latest Steam release v1.0.1.0
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 - **Mod Loader** - Load replacement assets from a `mods/` folder instead of editing .dat files (experimental)
 - **Texture Replacer** - Replace in-game textures with custom .png or .dds files in `mods/textures/` (hash-based filenames; use texture dump to discover hashes)
+- **Voices** - Play custom MP3 voice lines during dialog; files are loaded from `mods/voices/` by scene, dialog index, page, and speaker
 
 ## Todo
 
 - PXGP
-- Voices
+- Voices (battle)
 
 ## Installation
 
@@ -27,6 +28,8 @@ Supports the latest Steam release v1.0.1.0
 
 Wine/Proton users should use the following:
 `ENABLE_GAMESCOPE_WSI=0 PROTON_USE_WINED3D=1 WINEDLLOVERRIDES="d3d11=n,b" %command%`
+
+Disable the frame rate limiter if playing on Steamdeck in gaming mode.
 
 Note that upscaling is not currently compatible with wine/proton and will crash.
 
@@ -39,10 +42,10 @@ CrossFix creates a `settings.ini` in your game folder with default values. You c
 #   Display
 # ============================================
 
-# Dynamic widescreen (auto-adjusts to resolution/aspect ratio). Use with in-game ScreenType: Full.
+# Dynamic widescreen (auto-adjusts to resolution/aspect ratio).
 widescreen_enabled=1
 
-# Force camera boundaries in rooms (consistent widescreen). Disable if it breaks camera placement.
+# Force camera boundaries in rooms . Disable if it breaks camera placement.
 boundary_overrides=1
 
 # ============================================
@@ -80,6 +83,9 @@ mod_loader_enabled=1
 
 # Load replacement textures from mods/textures (by hash)
 texture_replace_enabled=0
+
+# Play custom voice MP3s during dialog (mods/voices/<sceneId>/<dialog>-<page>-<speaker>.mp3)
+voices_enabled=0
 ```
 
 ## Notes
@@ -87,6 +93,7 @@ texture_replace_enabled=0
 - **Double FPS:** Enable in-game slowdown (press F1) when using `double_fps_mode=1`. Use `hide_slow_icon=1` to hide the slow-motion icon.
 - **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Set `mod_loader_enabled=1` in settings.ini (default). Texture dump disables the mod loader while active.
 - **Texture Replacer:** (1) Set `texture_dump_enabled=1`, run the game, and visit the area/UI you want to mod—textures are dumped to `dump/` with filenames like `256x256_0123456789abcdef.dds`. (2) Edit or create a replacement keeping the same name, or use the hash in a new file named `WIDTHxHEIGHT_<16hex>.png` or `.dds` (e.g. `256x256_0123456789abcdef.png`). (3) Put replacement files in `mods/textures/`. (4) Set `texture_dump_enabled=0` and `texture_replace_enabled=1`, then launch the game.
+- **Voices:** With `voices_enabled=1`, the mod plays MP3 files from `mods/voices/` when dialog is shown. Place files as `mods/voices/<sceneId>/<dialogIndex>-<page>-<characterName>.mp3` (e.g. `mods/voices/123/5-0-serge.mp3` for scene 123, dialog 5, first page, Serge). The game logs the requested path to the console if a file is missing.
 
 ## Acknowledgements
 
