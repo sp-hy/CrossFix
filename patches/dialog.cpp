@@ -97,10 +97,11 @@ ScaleDialogValues(float *dialogWidth, float *cursorX) {
 // Return address for dialog X scale hook (set at patch time)
 static uintptr_t g_dialogXScaleReturnAddr = 0;
 
-// Patch 4: offsets and return address (set at patch time)
-static uint32_t g_cursorPosDialogWidthOffset = 0;
-static uint32_t g_cursorPosCursorXOffset = 0;
+// Patch 4: Dialog width and cursor position hooks (new positions to avoid
+// flicker)
+static uintptr_t g_dialogWidthReturnAddr = 0;
 static uintptr_t g_cursorPosReturnAddr = 0;
+static uintptr_t g_cursorPos2ReturnAddr = 0;
 
 // Naked hook: original mulps + scale X component, then jmp back
 extern "C" __declspec(naked) void DialogTextXScaleHook() {
@@ -113,22 +114,52 @@ extern "C" __declspec(naked) void DialogTextXScaleHook() {
   }
 }
 
-// Naked hook: scale dialog width + cursor X via ScaleDialogValues, then
-// original movss, jmp back
-extern "C" __declspec(naked) void CursorPosDialogWidthHook() {
+// Naked hook at CHRONOCROSS.exe+39B68: mov eax,[edi+0004DBD8]. We scale the
+// value in [edi+0004DBD8] in place before it goes into eax, then do the load.
+extern "C" __declspec(naked) void DialogWidthHook() {
   __asm {
-		pushad
-		mov ecx, dword ptr [g_cursorPosDialogWidthOffset]
-		add ecx, eax
-		mov edx, dword ptr [g_cursorPosCursorXOffset]
-		add edx, eax
-		push edx
+		mov eax, [edi+0004DBD8h]
+		movd xmm0, eax
+		mulss xmm0, dword ptr [g_xScale]
+		movd eax, xmm0
+		mov [edi+0004DBD8h], eax
+		jmp dword ptr [g_dialogWidthReturnAddr]
+  }
+}
+
+// Naked hook at CHRONOCROSS.exe+39BD1: mov eax,[edi+40] (cursor position).
+// We scale [edi+40] in place first (using ecx as temp), then load into eax and
+// re-execute mov [edi+001CA094],eax.
+extern "C" __declspec(naked) void CursorPosHook() {
+  __asm {
 		push ecx
-		call ScaleDialogValues
-		popad
-		mov ecx, dword ptr [g_cursorPosCursorXOffset]
-		movss xmm0, dword ptr [eax+ecx]
+		mov ecx, [edi+40h]
+		movd xmm0, ecx
+		mulss xmm0, dword ptr [g_xScale]
+		movd ecx, xmm0
+		mov [edi+40h], ecx
+		mov eax, ecx
+		pop ecx
+		mov [edi+001CA094h], eax
 		jmp dword ptr [g_cursorPosReturnAddr]
+  }
+}
+
+// Naked hook at CHRONOCROSS.exe+522B0: mov eax,[ecx+esi+40] then store at
+// [esi+001CA094]. We scale [ecx+esi+40] in place first (edx temp), then load
+// into eax and re-execute mov [esi+001CA094],eax.
+extern "C" __declspec(naked) void CursorPos2Hook() {
+  __asm {
+		push edx
+		mov edx, [ecx+esi+40h]
+		movd xmm0, edx
+		mulss xmm0, dword ptr [g_xScale]
+		movd edx, xmm0
+		mov [ecx+esi+40h], edx
+		mov eax, edx
+		pop edx
+		mov [esi+001CA094h], eax
+		jmp dword ptr [g_cursorPos2ReturnAddr]
   }
 }
 
@@ -173,19 +204,43 @@ bool ApplyDialogPatch(uintptr_t base) {
   }
 
   // ============================================================
-  // Patch 4: Cursor Position and Dialog Width Hook at CHRONOCROSS.exe+433BA
-  // Original: movss xmm0,[eax+CHRONOCROSS.exe+1089E14] (F3 0F 10 80 14 9E 08
-  // 01) We hook to scale cursor X position and dialog width based on aspect
-  // ratio
+  // Patch 4a: Dialog width load at CHRONOCROSS.exe+39B68
+  // Original: mov eax,[edi+0004DBD8]. We scale the value in edi+4DBD8 in place
+  // before it goes into eax, then jmp to 39B6E.
   // ============================================================
-  uintptr_t cursorPosHookAddr = base + 0x433BA;
-  g_cursorPosDialogWidthOffset = (uint32_t)(base + 0x1089E10);
-  g_cursorPosCursorXOffset = (uint32_t)(base + 0x1089E14);
-  g_cursorPosReturnAddr = cursorPosHookAddr + 8; // After the 8-byte instruction
+  uintptr_t widthHookAddr = base + 0x39B68;
+  g_dialogWidthReturnAddr = widthHookAddr + 6; // After 6-byte mov
 
-  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosDialogWidthHook,
-                      8)) {
+  if (!InstallJmpHook(widthHookAddr, (void *)&DialogWidthHook, 6)) {
+    std::cout << "Failed to apply dialog width hook" << std::endl;
+    success = false;
+  }
+
+  // ============================================================
+  // Patch 4b: Cursor position at CHRONOCROSS.exe+39BD1
+  // Original: mov eax,[edi+40] - cursor in edi+40. Scale eax by aspect.
+  // Overwrite 5 bytes (3-byte mov + 2 of next); we re-execute next mov in hook.
+  // ============================================================
+  uintptr_t cursorPosHookAddr = base + 0x39BD1;
+  g_cursorPosReturnAddr =
+      cursorPosHookAddr +
+      9; // After overwritten 5 bytes + re-executed mov (6 bytes) = 39BDA
+
+  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosHook, 5)) {
     std::cout << "Failed to apply cursor position hook" << std::endl;
+    success = false;
+  }
+
+  // ============================================================
+  // Patch 4c: Cursor position at CHRONOCROSS.exe+522B0
+  // Original: mov eax,[ecx+esi+40] then mov [esi+001CA094],eax. We scale
+  // [ecx+esi+40] in place before it goes into eax. Overwrite 5 bytes.
+  // ============================================================
+  uintptr_t cursorPos2HookAddr = base + 0x522B0;
+  g_cursorPos2ReturnAddr = cursorPos2HookAddr + 10; // After 5 overwritten + re-executed mov (6 bytes) = 522BA
+
+  if (!InstallJmpHook(cursorPos2HookAddr, (void *)&CursorPos2Hook, 5)) {
+    std::cout << "Failed to apply cursor position hook 2" << std::endl;
     success = false;
   }
 
