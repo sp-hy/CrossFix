@@ -7,6 +7,7 @@
 static float g_xScale =
     1.0f; // X scale for dialog text (1.0 = 4:3, 0.75 = 16:9)
 static float g_letterSpacing = 0.45f;   // Letter spacing (0.45 = 4:3 base)
+static float g_dialogMul35 = 0.35f;     // mulss at +44BD9 (0.35 = 4:3 base)
 static uint32_t g_portraitWidth = 960;  // Base 960
 static float g_lastCursorWidth = 70.0f; // Base 70.0
 
@@ -194,6 +195,16 @@ bool ApplyDialogPatch(uintptr_t base) {
   }
 
   // ============================================================
+  // Patch 2b: mulss xmm0,[CHRONOCROSS.exe+2CB8A4] at +44BD9
+  // Base value 0.35 - redirect to our g_dialogMul35 variable -- for Japanese
+  // ============================================================
+  if (!RedirectOperand(base + 0x44BD9 + 4, &g_dialogMul35)) {
+    std::cout << "Failed to apply dialog mul 0.35 redirection patch"
+              << std::endl;
+    success = false;
+  }
+
+  // ============================================================
   // Patch 3: Character Portrait Width
   // CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1,
   // [CHRONOCROSS.exe+E2F448]
@@ -237,7 +248,9 @@ bool ApplyDialogPatch(uintptr_t base) {
   // [ecx+esi+40] in place before it goes into eax. Overwrite 5 bytes.
   // ============================================================
   uintptr_t cursorPos2HookAddr = base + 0x522B0;
-  g_cursorPos2ReturnAddr = cursorPos2HookAddr + 10; // After 5 overwritten + re-executed mov (6 bytes) = 522BA
+  g_cursorPos2ReturnAddr =
+      cursorPos2HookAddr +
+      10; // After 5 overwritten + re-executed mov (6 bytes) = 522BA
 
   if (!InstallJmpHook(cursorPos2HookAddr, (void *)&CursorPos2Hook, 5)) {
     std::cout << "Failed to apply cursor position hook 2" << std::endl;
@@ -256,9 +269,11 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
   if (aspectRatio < WIDESCREEN_THRESHOLD || menuOpen) {
     // Reset to 4:3 defaults
     if (g_xScale != 1.0f || g_letterSpacing != 0.45f ||
-        g_portraitWidth != 960 || g_lastCursorWidth != 70.0f) {
+        g_dialogMul35 != 0.35f || g_portraitWidth != 960 ||
+        g_lastCursorWidth != 70.0f) {
       g_xScale = 1.0f;
       g_letterSpacing = 0.45f;
+      g_dialogMul35 = 0.35f;
       g_portraitWidth = 960;
       g_lastCursorWidth = 70.0f;
 
@@ -282,6 +297,9 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
     // Letter Spacing: compress for widescreen (0.45 for 4:3, 0.3375 for 16:9)
     float newLetterSpacing = 0.45f * wideRatio;
 
+    // Dialog mul 0.35: compress for widescreen
+    float newDialogMul35 = 0.35f * wideRatio;
+
     // Portrait Width: compress for widescreen
     uint32_t newPortrait = (uint32_t)(960.0f * wideRatio);
 
@@ -289,10 +307,12 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
     float newCursorWidth = 70.0f * wideRatio;
 
     if (g_xScale != newXScale || g_letterSpacing != newLetterSpacing ||
-        g_portraitWidth != newPortrait || g_lastCursorWidth != newCursorWidth) {
+        g_dialogMul35 != newDialogMul35 || g_portraitWidth != newPortrait ||
+        g_lastCursorWidth != newCursorWidth) {
 
       g_xScale = newXScale;
       g_letterSpacing = newLetterSpacing;
+      g_dialogMul35 = newDialogMul35;
       g_portraitWidth = newPortrait;
       g_lastCursorWidth = newCursorWidth;
 
@@ -308,6 +328,7 @@ void UpdateDialogValues(float aspectRatio, bool isInBattle) {
 #ifdef _DEBUG
       std::cout << "Dialog updated: XScale=" << g_xScale
                 << ", LetterSpacing=" << g_letterSpacing
+                << ", DialogMul35=" << g_dialogMul35
                 << ", Portrait=" << g_portraitWidth
                 << ", Cursor=" << g_lastCursorWidth << " for aspect ratio "
                 << aspectRatio << std::endl;
