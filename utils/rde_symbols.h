@@ -359,6 +359,37 @@ constexpr uintptr_t gte_comp_matrix_impl = Rva(0x004FD390);
 constexpr int gte_comp_matrix_impl_prologue = 5;
 // guest memory region objects indexed by address >> 19 (vtable +0x0C read32)
 constexpr uintptr_t guest_region_table = Rva(0x01C2599C);
+// fine-Z recorder: ecx = guest address of the primitive a face builder is
+// about to write, edx = its OT entry, two stack arguments (depth, shift) the
+// caller removes; called after the face's projections
+constexpr uintptr_t hd_record_fine_z = Rva(0x004355F0);
+// ports of sys_weapon_draw_gt3/gt4, sys_model_face_ft3_avg, ft3_near,
+// ft4_avg, ft4_near, sys_weapon_lit_gt3/gt4, and their call of
+// hd_record_fine_z for each face they keep
+constexpr uintptr_t hook_native_port_800a067c_rep = Rva(0x0055A120);
+constexpr uintptr_t hook_native_port_800a067c_rep_plus_a9f =
+    hook_native_port_800a067c_rep + 0xA9F;
+constexpr uintptr_t hook_native_port_800a0bc4_rep = Rva(0x0055B710);
+constexpr uintptr_t hook_native_port_800a0bc4_rep_plus_b11 =
+    hook_native_port_800a0bc4_rep + 0xB11;
+constexpr uintptr_t hook_native_port_800a3ce4_rep = Rva(0x00564A70);
+constexpr uintptr_t hook_native_port_800a3ce4_rep_plus_777 =
+    hook_native_port_800a3ce4_rep + 0x777;
+constexpr uintptr_t hook_native_port_800a3f54_rep = Rva(0x00565560);
+constexpr uintptr_t hook_native_port_800a3f54_rep_plus_6db =
+    hook_native_port_800a3f54_rep + 0x6DB;
+constexpr uintptr_t hook_native_port_800a41e8_rep = Rva(0x00565FE0);
+constexpr uintptr_t hook_native_port_800a41e8_rep_plus_959 =
+    hook_native_port_800a41e8_rep + 0x959;
+constexpr uintptr_t hook_native_port_800a44d4_rep = Rva(0x00566D00);
+constexpr uintptr_t hook_native_port_800a44d4_rep_plus_834 =
+    hook_native_port_800a44d4_rep + 0x834;
+constexpr uintptr_t hook_native_port_800a6da4_rep = Rva(0x00571110);
+constexpr uintptr_t hook_native_port_800a6da4_rep_plus_97a =
+    hook_native_port_800a6da4_rep + 0x97A;
+constexpr uintptr_t hook_native_port_800a76d0_rep = Rva(0x005735D0);
+constexpr uintptr_t hook_native_port_800a76d0_rep_plus_d79 =
+    hook_native_port_800a76d0_rep + 0xD79;
 
 // Offsets in the GTE register block (PS1 register order, one word each)
 constexpr uintptr_t gte_rotation = 0x00;

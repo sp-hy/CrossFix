@@ -13,6 +13,4 @@ class Settings;
 // pgxp_enabled in settings.ini (on when the key is missing)
 bool PgxpEnabled(const Settings &settings);
 
-// stats (temporary, pgxp_stats in settings.ini): prints once a second why
-// corrections dropped out
-bool ApplyPgxpPatch(uintptr_t base, bool stats);
+bool ApplyPgxpPatch(uintptr_t base);

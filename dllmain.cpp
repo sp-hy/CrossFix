@@ -159,7 +159,7 @@ DWORD WINAPI MainThread(LPVOID param) {
   }
 
   if (PgxpEnabled(settings)) {
-    ApplyPgxpPatch(base, settings.GetBool("pgxp_stats", false));
+    ApplyPgxpPatch(base);
   }
 
   return 0;

@@ -30,6 +30,14 @@
 // corners, whatever else landed on those words. Neighbours that share a
 // vertex projected it from the same inputs, so they get the same position.
 //
+// Primitive records. The model face and weapon ports call the fine-Z
+// recorder for every face they keep, with the address of the primitive they
+// are about to write, right after the projections of its corners. That call
+// stores the face's positions under the primitive's address, and the OT walk
+// gives a polygon at that address exactly those positions when its corner
+// words are the recorded ones: a face projected twice in a frame (equal
+// words, different positions) gets the projections of its own packet.
+//
 // Otherwise a polygon takes for each corner the position whose projections
 // lie closest to those of its other corners (the corners of one polygon are
 // projected together); a corner on which equally close picks disagree is
@@ -47,13 +55,27 @@
 // instead. Transforms wait in a short queue: the two joint transforms a blend
 // consumes leave it there (they lie in the same unit cell as the blended
 // vertex and are never projected), the others become records when a
-// projection, a full queue or a new frame flushes it. A point several skinned
-// vertices truncate to keeps up to four fractions; the vertices of one face
-// are skinned close together, so each projection takes for each such vertex
-// the fraction whose skinning numbers lie closest to those of the batch's
-// other vertices (or, for a lone vertex, to the last batch that used skin
-// records), within kSkinSpread. A fraction a projection has used is replaced
-// first when a later pass needs room under its key.
+// projection, a full queue or a new frame flushes it. A blend reads the
+// latest transform of its point, except that the lit and field skinners
+// transform a vertex's two joints right before blending them, so when both
+// truncate to the same point the chain's first term reads the older one.
+//
+// A point several skinned vertices truncate to keeps up to four fractions,
+// each with the skinning passes that produced it (a pass is a run of results
+// between projections). Every model draw skins its vertices into the start
+// of the shared skinning buffer and builds its faces from it before the next
+// model is skinned, so the vertices of one projection batch are results of
+// one pass: the pass that produced results for the most of them, the later
+// one on a tie (for a quad's fourth corner, the pass of its triangle). A
+// vertex takes the fraction of that pass, and none when the pass has none
+// for it. Where one pass left several fractions on a point (seams between
+// parts), the vertex takes the one whose skinning numbers lie closest to
+// those of the batch's other vertices (or, for a lone vertex, to the batch
+// before it), within kSkinSpread; when several are equally close, the first
+// in skinning order (any of them stays inside the point's unit cell, so this
+// is never further off than the integer point). A fraction a projection has
+// used is
+// replaced first when a later pass needs room under its key.
 //
 // Precise matrices. The joint and object matrices are composed
 // with CompMatrix, which truncates every product to whole units and
@@ -174,12 +196,14 @@ struct SkinOffset {
   float d[3];
 };
 
-// One fraction of a skinned point, with the skinning numbers of the first and
-// the last result that produced it
+// One fraction of a skinned point, with the skinning numbers and the passes
+// of the first and the last result that produced it
 struct SkinCandidate {
   SkinOffset offset;
   uint32_t first;
   uint32_t last;
+  uint32_t firstPass;
+  uint32_t lastPass;
 };
 
 // Fractions of the skinned vertices that truncate to one point in one frame;
@@ -228,6 +252,17 @@ struct FaceRecord {
   PreciseVertex vertices[kMaxCorners];
 };
 
+// Fine words and positions of the corners of the face a builder wrote to one
+// primitive, in projection order
+struct PrimitiveRecord {
+  uint32_t corners;
+  uint32_t words[kMaxCorners];
+  PreciseVertex vertices[kMaxCorners];
+};
+
+// Guest addresses of primitives, as the OT walk reads them
+constexpr uint32_t kGuestOffsetMask = 0x7FFFFF;
+
 constexpr uint32_t kStampAmbiguous = 0x80000000u;
 constexpr uint32_t kStampUsed = 0x40000000u;
 constexpr uint32_t kStampEpoch = 0x3FFFFFFFu;
@@ -238,10 +273,6 @@ constexpr float kSameOffset = 1.0f / 1024.0f;
 // Skinned points this close are one point: at most about 0.01 pixel apart
 // on screen
 constexpr float kSameSkinOffset = 1.0f / 64.0f;
-// Temporary (stats): compositions whose dropped part exceeds these, which
-// deep or scaled chains reach
-constexpr double kLargeRotationOffset = 4.0;
-constexpr double kLargeTranslationOffset = 64.0;
 
 bool SameValue(const PreciseVertex &a, const PreciseVertex &b) {
   return std::fabs(a.x - b.x) <= kSamePosition &&
@@ -275,11 +306,6 @@ bool SameValue(const MatrixOffset &a, const MatrixOffset &b) {
   return true;
 }
 
-// What an insert did: a new key, a value merged into its record, a value
-// that made the key ambiguous, a used record replaced, or nothing (the
-// probe sequence is full)
-enum class Insertion { kAdded, kMerged, kConflict, kRenewed, kFull };
-
 // a is a later sequence number than b
 bool Later(uint32_t a, uint32_t b) { return static_cast<int32_t>(a - b) > 0; }
 
@@ -289,9 +315,9 @@ template <typename Value> void InitValue(Value *slot, const Value &value) {
   *slot = value;
 }
 
-template <typename Value>
-Insertion MergeValue(Value *slot, const Value &value) {
-  return SameValue(*slot, value) ? Insertion::kMerged : Insertion::kConflict;
+// MergeValue returns false when the value conflicts with the slot's
+template <typename Value> bool MergeValue(Value *slot, const Value &value) {
+  return SameValue(*slot, value);
 }
 
 void InitValue(VertexEntry *slot, const VertexCandidate &candidate) {
@@ -299,11 +325,11 @@ void InitValue(VertexEntry *slot, const VertexCandidate &candidate) {
   slot->candidates[0] = candidate;
 }
 
-Insertion MergeValue(VertexEntry *slot, const VertexCandidate &candidate) {
+bool MergeValue(VertexEntry *slot, const VertexCandidate &candidate) {
   for (uint32_t i = 0; i < slot->count; ++i) {
     if (SameValue(slot->candidates[i].vertex, candidate.vertex)) {
       slot->candidates[i].last = candidate.last;
-      return Insertion::kMerged;
+      return true;
     }
   }
   for (uint32_t i = 0; i < slot->count; ++i) {
@@ -312,13 +338,13 @@ Insertion MergeValue(VertexEntry *slot, const VertexCandidate &candidate) {
         std::fabs(existing.vertex.w - candidate.vertex.w) <=
             existing.vertex.w * kSameSurfaceDepth) {
       existing.last = candidate.last;
-      return Insertion::kMerged;
+      return true;
     }
   }
   if (slot->count == kCandidates)
-    return Insertion::kConflict;
+    return false;
   slot->candidates[slot->count++] = candidate;
-  return Insertion::kMerged;
+  return true;
 }
 
 void InitValue(SkinEntry *slot, const SkinCandidate &candidate) {
@@ -329,7 +355,7 @@ void InitValue(SkinEntry *slot, const SkinCandidate &candidate) {
 
 // A used candidate that gets a result again, or that a new fraction replaces
 // when the key is full, is renewed: the result belongs to a later pass
-Insertion MergeValue(SkinEntry *slot, const SkinCandidate &candidate) {
+bool MergeValue(SkinEntry *slot, const SkinCandidate &candidate) {
   for (uint32_t i = 0; i < slot->count; ++i) {
     SkinCandidate &existing = slot->candidates[i];
     if (!SameValue(existing.offset, candidate.offset))
@@ -338,17 +364,18 @@ Insertion MergeValue(SkinEntry *slot, const SkinCandidate &candidate) {
     if (slot->used & bit) {
       slot->used &= ~bit;
       existing = candidate;
-      return Insertion::kRenewed;
+      return true;
     }
     existing.last = candidate.last;
-    return Insertion::kMerged;
+    existing.lastPass = candidate.lastPass;
+    return true;
   }
   if (slot->count < kCandidates) {
     slot->candidates[slot->count++] = candidate;
-    return Insertion::kMerged;
+    return true;
   }
   if (!slot->used)
-    return Insertion::kConflict;
+    return false;
   uint32_t oldest = kCandidates;
   for (uint32_t i = 0; i < slot->count; ++i) {
     if ((slot->used & (1u << i)) &&
@@ -358,7 +385,14 @@ Insertion MergeValue(SkinEntry *slot, const SkinCandidate &candidate) {
   }
   slot->used &= ~(1u << oldest);
   slot->candidates[oldest] = candidate;
-  return Insertion::kRenewed;
+  return true;
+}
+
+// A primitive is written once per frame: the latest face recorded for its
+// address is the one in it
+bool MergeValue(PrimitiveRecord *slot, const PrimitiveRecord &record) {
+  *slot = record;
+  return true;
 }
 
 uint32_t HashKey(uint32_t key) { return key * 0x9E3779B1u; }
@@ -390,7 +424,7 @@ public:
   // of its key, whatever its value, instead of merged with it: that insert
   // is the next pass over the same data, which later lookups belong to
   template <typename Record>
-  Insertion Insert(const Key &key, const Record &record, uint32_t epoch) {
+  void Insert(const Key &key, const Record &record, uint32_t epoch) {
     const uint32_t stamp = epoch & kStampEpoch;
     Slot *slots = slots_[stamp & 1];
     uint32_t index = Index(key);
@@ -400,24 +434,22 @@ public:
         slot.key = key;
         slot.stamp = stamp;
         InitValue(&slot.value, record);
-        return Insertion::kAdded;
+        return;
       }
       if (slot.key == key) {
         if (slot.stamp & kStampUsed) {
           slot.stamp = stamp;
           InitValue(&slot.value, record);
-          return Insertion::kRenewed;
+          return;
         }
         if (slot.stamp & kStampAmbiguous)
-          return Insertion::kMerged;
-        const Insertion result = MergeValue(&slot.value, record);
-        if (result == Insertion::kConflict)
+          return;
+        if (!MergeValue(&slot.value, record))
           slot.stamp |= kStampAmbiguous;
-        return result;
+        return;
       }
       index = (index + 1) & (kSize - 1);
     }
-    return Insertion::kFull;
   }
 
   // The record of key from the frame epoch; it stays valid until the frame
@@ -494,138 +526,17 @@ typedef ValueTable<uint32_t, VertexEntry, 16> VertexTable;
 typedef ValueTable<FaceKey, FaceRecord, 15> FaceTable;
 typedef ValueTable<uint64_t, SkinEntry, 15> SkinTable;
 typedef ValueTable<MatrixKey, MatrixOffset, 13> MatrixTable;
+typedef ValueTable<uint32_t, PrimitiveRecord, 14> PrimitiveTable;
 
 // Records of the frame being captured (emulation thread)
 VertexTable g_fineTable;
 VertexTable g_integerTable;
 FaceTable g_fineFaces;
 FaceTable g_integerFaces;
+PrimitiveTable g_primitiveFaces;
 SkinTable g_skinTable;
 MatrixTable g_matrixTable;
 
-// Temporary: why corrections drop out, per polygon kind (emulation thread).
-// Polygons count when at least one corner word has a record.
-struct PolygonStats {
-  uint32_t polygons;
-  // All corners from their projection batch's record
-  uint32_t faces;
-  // All corners from word records
-  uint32_t complete;
-  // Some corners from word records
-  uint32_t partial;
-  // Left uncorrected
-  uint32_t rejected;
-  // Records taken from the previous frame
-  uint32_t previous;
-  // Some but not all corner words known in this frame, some in the previous
-  uint32_t split;
-  // Corners left uncorrected by reason
-  uint32_t absent;
-  uint32_t ambiguous;
-  uint32_t ties;
-  // Integer polygons whose corners were projected too far apart
-  uint32_t spread;
-  // Words that got a fifth position, batches with two different positions
-  uint32_t crowdedWords;
-  uint32_t faceConflicts;
-};
-
-// Temporary: counters printed once a second with pgxp_stats=1 (emulation
-// thread)
-struct DropoutStats {
-  // OT walks, and frames (walks followed by GTE work)
-  uint32_t walks;
-  uint32_t frames;
-  uint32_t projections;
-  // Projections not matching RDE's own result (or behind the camera)
-  uint32_t rejected;
-  uint32_t tableFull;
-  PolygonStats fine;
-  PolygonStats integer;
-  // Skin records: fractions that found a key full of unused ones (it turns
-  // ambiguous), used fractions refreshed or replaced by a later pass,
-  // projected vertices left integer because their key is ambiguous or its
-  // fractions tie or lie too far in skinning order from the batch's others,
-  // projected vertices whose key had several fractions and that took one by
-  // skinning order, transforms a blend consumed, broken GPF/GPL chains
-  uint32_t skinConflicts;
-  uint32_t skinRenewed;
-  uint32_t skinAmbiguous;
-  uint32_t skinResolved;
-  uint32_t skinConsumed;
-  uint32_t blendsBroken;
-  // Matrix records: compositions that did not recompute, accepted ones with
-  // a saturated rotation entry, accepted ones with a large dropped part,
-  // conflicts, used records replaced, GTE matrices whose key was ambiguous
-  uint32_t matrixRejected;
-  uint32_t matrixSaturated;
-  uint32_t matrixLarge;
-  uint32_t matrixConflicts;
-  uint32_t matrixRenewed;
-  uint32_t matrixAmbiguous;
-};
-DropoutStats g_stats = {};
-bool g_statsEnabled = false;
-ULONGLONG g_statsTime = 0;
-
-// Counts an insert that failed for lack of room or made a key ambiguous
-void CountInsertion(Insertion insertion, uint32_t *conflicts,
-                    uint32_t *renewed) {
-  switch (insertion) {
-  case Insertion::kAdded:
-  case Insertion::kMerged:
-    break;
-  case Insertion::kConflict:
-    ++*conflicts;
-    break;
-  case Insertion::kRenewed:
-    if (renewed)
-      ++*renewed;
-    break;
-  case Insertion::kFull:
-    ++g_stats.tableFull;
-    break;
-  }
-}
-
-void PrintPolygonStats(const char *kind, const PolygonStats &stats) {
-  std::cout << "[PGXP] " << kind << ": polygons " << stats.polygons
-            << " faces " << stats.faces << " words " << stats.complete
-            << " partial " << stats.partial << " rejected " << stats.rejected
-            << " previous " << stats.previous << " split " << stats.split
-            << " | corners absent "
-            << stats.absent << " ambiguous " << stats.ambiguous << " ties "
-            << stats.ties << " spread " << stats.spread
-            << " | crowded words " << stats.crowdedWords
-            << " face conflicts " << stats.faceConflicts << std::endl;
-}
-
-// Once a second while pgxp_stats is set
-void ReportStats() {
-  if (!g_statsEnabled)
-    return;
-  const ULONGLONG now = GetTickCount64();
-  if (now - g_statsTime < 1000)
-    return;
-  g_statsTime = now;
-  const DropoutStats &stats = g_stats;
-  std::cout << "[PGXP] walks " << stats.walks << " frames " << stats.frames
-            << " projections " << stats.projections << " rejected "
-            << stats.rejected << " table full " << stats.tableFull
-            << std::endl;
-  PrintPolygonStats("fine", stats.fine);
-  PrintPolygonStats("integer", stats.integer);
-  std::cout << "[PGXP] skin: conflicts " << stats.skinConflicts << " renewed "
-            << stats.skinRenewed << " ambiguous " << stats.skinAmbiguous
-            << " by sequence " << stats.skinResolved << " consumed "
-            << stats.skinConsumed << " broken blends " << stats.blendsBroken
-            << " | matrix: rejected " << stats.matrixRejected << " saturated "
-            << stats.matrixSaturated << " large " << stats.matrixLarge
-            << " conflicts " << stats.matrixConflicts << " renewed "
-            << stats.matrixRenewed << " ambiguous " << stats.matrixAmbiguous
-            << std::endl;
-  g_stats = {};
-}
 // Frame number of the records being captured; slots of other frames are free
 uint32_t g_epoch = 2;
 bool g_walkSinceCapture = false;
@@ -633,10 +544,14 @@ bool g_walkSinceCapture = false;
 uint32_t g_sequence = 0;
 // Number of the next skinning result (transform or blend)
 uint32_t g_skinSequence = 0;
+// Number of the current skinning pass, and whether projections ran since its
+// last result (the next result starts a new pass)
+uint32_t g_skinPass = 0;
+bool g_projectedSinceSkin = false;
 
 // Skinning results not yet recorded (emulation thread), the oldest at begin:
-// a blend consumes the latest one of each point it reads. The skinners blend
-// at most 16 vertices from 32 transforms.
+// a blend consumes the one of each point it reads (ConsumeResult). The
+// skinners blend at most 16 vertices from 32 transforms.
 struct PendingResult {
   uint64_t key;
   SkinCandidate candidate;
@@ -650,12 +565,15 @@ struct PendingResults {
 };
 PendingResults g_pending = {};
 
-// Skinning numbers of the fractions the last projection batch took, for a
-// batch with a single skinned vertex (emulation thread)
+// Pass and skinning numbers of the fractions the last projection batch took,
+// and the sequence number right after it, for a batch with a single skinned
+// vertex (emulation thread)
 struct SkinAnchor {
   bool valid;
+  uint32_t pass;
   uint32_t first;
   uint32_t last;
+  uint32_t next;
 };
 SkinAnchor g_skinAnchor = {};
 
@@ -796,8 +714,7 @@ void RecordOldestResult() {
   --g_pending.count;
   if (item.consumed)
     return;
-  CountInsertion(g_skinTable.Insert(item.key, item.candidate, g_epoch),
-                 &g_stats.skinConflicts, &g_stats.skinRenewed);
+  g_skinTable.Insert(item.key, item.candidate, g_epoch);
 }
 
 void RecordPendingResults() {
@@ -809,9 +726,13 @@ void RecordPendingResults() {
 uint32_t QueueResult(uint64_t key, const SkinOffset &offset) {
   if (g_pending.count == kPendingResults)
     RecordOldestResult();
+  if (g_projectedSinceSkin) {
+    g_projectedSinceSkin = false;
+    ++g_skinPass;
+  }
   const uint32_t sequence = g_skinSequence++;
   g_pending.items[(g_pending.begin + g_pending.count) % kPendingResults] = {
-      key, {offset, sequence, sequence}, false};
+      key, {offset, sequence, sequence, g_skinPass, g_skinPass}, false};
   ++g_pending.count;
   return sequence;
 }
@@ -822,7 +743,6 @@ void BeginCapture() {
     g_walkSinceCapture = false;
     RecordPendingResults();
     ++g_epoch;
-    ++g_stats.frames;
   }
 }
 
@@ -868,8 +788,6 @@ const MatrixOffset *GteMatrixOffset(const uint8_t *gte) {
     lookup.found = result == Lookup::kFound;
     if (lookup.found)
       lookup.offset = *offset;
-    else if (result == Lookup::kAmbiguous)
-      ++g_stats.matrixAmbiguous;
   }
   return lookup.found ? &lookup.offset : nullptr;
 }
@@ -949,12 +867,10 @@ void CaptureVertex(const uint8_t *gte, const ProjectionSetup &setup,
                    uint32_t sequence, CapturedVertex *out) {
   out->fineValid = false;
   out->integerValid = false;
-  ++g_stats.projections;
   const int16_t *vertex = reinterpret_cast<const int16_t *>(
       gte + rde::gte_vector0 + vertexIndex * kGteVectorStride);
   Projection base;
   if (!Project(setup, vertex[0], vertex[1], vertex[2], &base)) {
-    ++g_stats.rejected;
     PushShadow(sxyWord, 0.0f, 0.0f, false);
     return;
   }
@@ -974,7 +890,6 @@ void CaptureVertex(const uint8_t *gte, const ProjectionSetup &setup,
   const bool integerValid = std::fabs(baseX - screenX) <= tolerance + 1.0 &&
                             std::fabs(baseY - screenY) <= tolerance + 1.0;
   if (!fineValid && !integerValid) {
-    ++g_stats.rejected;
     PushShadow(sxyWord, 0.0f, 0.0f, false);
     return;
   }
@@ -997,15 +912,13 @@ void CaptureVertex(const uint8_t *gte, const ProjectionSetup &setup,
       sequence,
       sequence};
   if (fineValid)
-    CountInsertion(g_fineTable.Insert(fineWord, fine, g_epoch),
-                   &g_stats.fine.crowdedWords, nullptr);
+    g_fineTable.Insert(fineWord, fine, g_epoch);
 
   const float clampedX = static_cast<float>(std::clamp(precise.x, -1024.0, 1023.0));
   const float clampedY = static_cast<float>(std::clamp(precise.y, -1024.0, 1023.0));
   const VertexCandidate integer = {{clampedX, clampedY, w}, sequence, sequence};
   if (integerValid)
-    CountInsertion(g_integerTable.Insert(sxyWord, integer, g_epoch),
-                   &g_stats.integer.crowdedWords, nullptr);
+    g_integerTable.Insert(sxyWord, integer, g_epoch);
   PushShadow(sxyWord, clampedX, clampedY, integerValid);
   *out = {fineValid, integerValid, fineWord, sxyWord, fine.vertex,
           integer.vertex};
@@ -1030,14 +943,13 @@ FaceKey MakeFaceKey(const uint32_t *words, uint32_t corners, uint32_t *order) {
 
 // Records the positions of one projection batch under its corner words
 void InsertFace(FaceTable *table, const uint32_t *words,
-                const PreciseVertex *vertices, uint32_t corners,
-                uint32_t *conflicts) {
+                const PreciseVertex *vertices, uint32_t corners) {
   uint32_t order[kMaxCorners];
   const FaceKey key = MakeFaceKey(words, corners, order);
   FaceRecord record = {};
   for (uint32_t i = 0; i < corners; ++i)
     record.vertices[i] = vertices[order[i]];
-  CountInsertion(table->Insert(key, record, g_epoch), conflicts, nullptr);
+  table->Insert(key, record, g_epoch);
 }
 
 // Face records of a batch whose corners all have a record of that kind
@@ -1057,11 +969,9 @@ void InsertFaces(const CapturedVertex *captured, uint32_t corners) {
     integerVertices[i] = captured[i].integer;
   }
   if (fine)
-    InsertFace(&g_fineFaces, fineWords, fineVertices, corners,
-               &g_stats.fine.faceConflicts);
+    InsertFace(&g_fineFaces, fineWords, fineVertices, corners);
   if (integer)
-    InsertFace(&g_integerFaces, integerWords, integerVertices, corners,
-               &g_stats.integer.faceConflicts);
+    InsertFace(&g_integerFaces, integerWords, integerVertices, corners);
 }
 
 // The last RTPT (emulation thread): an RTPS right after it (the next
@@ -1073,6 +983,14 @@ struct ProjectionBatch {
 };
 ProjectionBatch g_lastBatch = {};
 
+// Corners of the face the last projections make: the last RTPT, with the
+// RTPS right after it; none after any other projection (emulation thread)
+struct CurrentFace {
+  uint32_t corners;
+  CapturedVertex vertices[kMaxCorners];
+};
+CurrentFace g_currentFace = {};
+
 // Face records of a projection batch: an RTPT is a triangle, and with the
 // RTPS that follows it a quad
 void CaptureFaces(const CapturedVertex *captured, int count,
@@ -1082,15 +1000,36 @@ void CaptureFaces(const CapturedVertex *captured, int count,
     g_lastBatch.valid = true;
     g_lastBatch.next = sequence + 3;
     memcpy(g_lastBatch.vertices, captured, sizeof(g_lastBatch.vertices));
+    g_currentFace.corners = 3;
+    memcpy(g_currentFace.vertices, captured, sizeof(g_lastBatch.vertices));
     return;
   }
+  g_currentFace.corners = 0;
   if (g_lastBatch.valid && g_lastBatch.next == sequence) {
     CapturedVertex quad[kMaxCorners];
     memcpy(quad, g_lastBatch.vertices, sizeof(g_lastBatch.vertices));
     quad[3] = captured[0];
     InsertFaces(quad, kMaxCorners);
+    g_currentFace.corners = kMaxCorners;
+    memcpy(g_currentFace.vertices, quad, sizeof(quad));
   }
   g_lastBatch.valid = false;
+}
+
+// The fine-Z recorder is called for the primitive at guest address
+// primitive: records the current face under it
+void RecordPrimitiveFace(uint32_t primitive) {
+  const CurrentFace &face = g_currentFace;
+  if (!face.corners)
+    return;
+  PrimitiveRecord record = {face.corners};
+  for (uint32_t i = 0; i < face.corners; ++i) {
+    if (!face.vertices[i].fineValid)
+      return;
+    record.words[i] = face.vertices[i].fineWord;
+    record.vertices[i] = face.vertices[i].fine;
+  }
+  g_primitiveFaces.Insert(primitive & kGuestOffsetMask, record, g_epoch);
 }
 
 // How far apart two ranges of sequence numbers lie; 0 when they overlap
@@ -1103,27 +1042,83 @@ uint32_t RangeDistance(uint32_t firstA, uint32_t lastA, uint32_t firstB,
   return 0;
 }
 
-// Picks a fraction for each skinned vertex of a batch (choice) whose point
-// has several: the combination in which the vertices lie closest in skinning
-// order to their nearest other skinned vertex (summed over the batch), or,
-// for a single skinned vertex, the fraction closest to the anchor. Returns
-// the vertices (bit i for entries[i]) left without a pick: equally close
-// combinations disagree on them, or their pick lies more than kSkinSpread
-// from the others.
-uint32_t ChooseSkin(const SkinEntry *const *entries, uint32_t count,
-                    uint32_t *choice) {
+// The candidate is a result of the skinning pass
+bool InPass(const SkinCandidate &candidate, uint32_t pass) {
+  return !Later(candidate.firstPass, pass) && !Later(pass, candidate.lastPass);
+}
+
+bool HasPass(const SkinEntry &entry, uint32_t pass) {
+  for (uint32_t c = 0; c < entry.count; ++c) {
+    if (InPass(entry.candidates[c], pass))
+      return true;
+  }
+  return false;
+}
+
+// The skinning pass the skinned vertices of a batch come from: the pass that
+// produced results for the most of them, the later one on a tie; for the
+// fourth corner of a quad, the pass of its triangle when that produced a
+// result for it
+uint32_t BatchPass(const SkinEntry *const *entries, uint32_t count,
+                   bool quadCorner) {
+  if (quadCorner && HasPass(*entries[0], g_skinAnchor.pass))
+    return g_skinAnchor.pass;
+  uint32_t best = 0;
+  uint32_t bestVotes = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    for (uint32_t c = 0; c < entries[i]->count; ++c) {
+      const uint32_t pass = entries[i]->candidates[c].lastPass;
+      uint32_t votes = 0;
+      for (uint32_t j = 0; j < count; ++j)
+        votes += HasPass(*entries[j], pass) ? 1 : 0;
+      if (votes > bestVotes || (votes == bestVotes && Later(pass, best))) {
+        best = pass;
+        bestVotes = votes;
+      }
+    }
+  }
+  return best;
+}
+
+// The fractions of one skinned vertex from the batch's pass, with their
+// indices in its entry
+struct SkinChoices {
+  uint32_t count;
+  uint32_t index[kCandidates];
+  const SkinCandidate *candidates[kCandidates];
+};
+
+// Vertices (bit i for choices[i]) ChooseSkin left without a pick, by reason
+struct SkinDisputes {
+  uint32_t ties;
+  uint32_t distant;
+  uint32_t lone;
+};
+
+// Picks a fraction for each skinned vertex of a batch (choice) that has
+// several in the batch's pass: the combination in which the vertices lie
+// closest in skinning order to their nearest other skinned vertex (summed
+// over the batch), or, for a single skinned vertex, the fraction closest to
+// the anchor when that is of the same pass. Where equally close combinations
+// disagree on a vertex it is marked as a tie and keeps the first of them; it
+// is left without a pick when its pick lies more than kSkinSpread from the
+// others or a single one has no anchor.
+void ChooseSkin(const SkinChoices *choices, uint32_t count, uint32_t pass,
+                uint32_t *choice, SkinDisputes *disputes) {
   uint32_t several = 0;
   for (uint32_t i = 0; i < count; ++i) {
-    if (entries[i]->count > 1)
+    if (choices[i].count > 1)
       several |= 1u << i;
   }
   if (count == 1) {
-    if (!g_skinAnchor.valid)
-      return several;
+    if (!g_skinAnchor.valid || g_skinAnchor.pass != pass) {
+      disputes->lone = several;
+      return;
+    }
     uint32_t best = 0;
     bool tied = false;
-    for (uint32_t c = 0; c < entries[0]->count; ++c) {
-      const SkinCandidate &candidate = entries[0]->candidates[c];
+    for (uint32_t c = 0; c < choices[0].count; ++c) {
+      const SkinCandidate &candidate = *choices[0].candidates[c];
       const uint32_t distance =
           RangeDistance(candidate.first, candidate.last, g_skinAnchor.first,
                         g_skinAnchor.last);
@@ -1135,31 +1130,34 @@ uint32_t ChooseSkin(const SkinEntry *const *entries, uint32_t count,
         tied = true;
       }
     }
-    return tied || best > kSkinSpread ? several : 0;
+    if (tied)
+      disputes->ties = several;
+    else if (best > kSkinSpread)
+      disputes->distant = several;
+    return;
   }
 
   uint32_t combinations = 1;
   for (uint32_t i = 0; i < count; ++i)
-    combinations *= entries[i]->count;
+    combinations *= choices[i].count;
   uint32_t bestScore = 0;
   uint32_t bestNearest[3] = {};
-  uint32_t disputed = 0;
   for (uint32_t combination = 0; combination < combinations; ++combination) {
     uint32_t pick[3];
     uint32_t rest = combination;
     for (uint32_t i = 0; i < count; ++i) {
-      pick[i] = rest % entries[i]->count;
-      rest /= entries[i]->count;
+      pick[i] = rest % choices[i].count;
+      rest /= choices[i].count;
     }
     uint32_t score = 0;
     uint32_t nearest[3];
     for (uint32_t i = 0; i < count; ++i) {
-      const SkinCandidate &a = entries[i]->candidates[pick[i]];
+      const SkinCandidate &a = *choices[i].candidates[pick[i]];
       nearest[i] = UINT32_MAX;
       for (uint32_t j = 0; j < count; ++j) {
         if (j == i)
           continue;
-        const SkinCandidate &b = entries[j]->candidates[pick[j]];
+        const SkinCandidate &b = *choices[j].candidates[pick[j]];
         nearest[i] = (std::min)(
             nearest[i], RangeDistance(a.first, a.last, b.first, b.last));
       }
@@ -1167,32 +1165,32 @@ uint32_t ChooseSkin(const SkinEntry *const *entries, uint32_t count,
     }
     if (combination == 0 || score < bestScore) {
       bestScore = score;
-      disputed = 0;
+      disputes->ties = 0;
       memcpy(choice, pick, count * sizeof(pick[0]));
       memcpy(bestNearest, nearest, count * sizeof(nearest[0]));
     } else if (score == bestScore) {
       for (uint32_t i = 0; i < count; ++i) {
         if (pick[i] != choice[i])
-          disputed |= 1u << i;
+          disputes->ties |= 1u << i;
       }
     }
   }
   for (uint32_t i = 0; i < count; ++i) {
     if (bestNearest[i] > kSkinSpread)
-      disputed |= several & (1u << i);
+      disputes->distant |= several & ~disputes->ties & (1u << i);
   }
-  return disputed;
 }
 
 // Skin fractions of a projection batch's input vertices (out[i], nullptr
-// without one): a vertex whose point has one fraction takes it, one whose
-// point has several takes the pick of ChooseSkin. Marks the fractions taken
-// as used and makes them the anchor.
-void ResolveSkin(const uint8_t *gte, int count, const SkinOffset **out) {
+// without one), from the batch's pass: a vertex with one fraction there
+// takes it, one with several takes the pick of ChooseSkin, one with none
+// stays integer. Marks the fractions taken as used and makes them the
+// anchor; sequence is the number of the batch's first projection.
+void ResolveSkin(const uint8_t *gte, int count, uint32_t sequence,
+                 const SkinOffset **out) {
   SkinEntry *entries[3];
   int vertices[3];
   uint32_t found = 0;
-  bool several = false;
   for (int i = 0; i < count; ++i) {
     out[i] = nullptr;
     const int16_t *vertex = reinterpret_cast<const int16_t *>(
@@ -1200,28 +1198,56 @@ void ResolveSkin(const uint8_t *gte, int count, const SkinOffset **out) {
     SkinEntry *entry = nullptr;
     const Lookup result = g_skinTable.Find(
         SkinKey(vertex[0], vertex[1], vertex[2]), g_epoch, &entry);
-    if (result == Lookup::kAmbiguous)
-      ++g_stats.skinAmbiguous;
     if (result != Lookup::kFound)
       continue;
     entries[found] = entry;
     vertices[found] = i;
     ++found;
-    several = several || entry->count > 1;
   }
-  uint32_t choice[3] = {};
-  const uint32_t left = several ? ChooseSkin(entries, found, choice) : 0;
-  SkinAnchor anchor = {};
+  if (!found)
+    return;
+
+  const bool quadCorner =
+      count == 1 && g_skinAnchor.valid && g_skinAnchor.next == sequence;
+  const uint32_t pass = BatchPass(entries, found, quadCorner);
+  SkinChoices choices[3];
+  uint32_t usable = 0;
+  bool several = false;
   for (uint32_t i = 0; i < found; ++i) {
-    SkinEntry &entry = *entries[i];
-    if (left & (1u << i)) {
-      ++g_stats.skinAmbiguous;
-      continue;
+    SkinChoices &options = choices[usable];
+    options.count = 0;
+    for (uint32_t c = 0; c < entries[i]->count; ++c) {
+      if (!InPass(entries[i]->candidates[c], pass))
+        continue;
+      options.index[options.count] = c;
+      options.candidates[options.count] = &entries[i]->candidates[c];
+      ++options.count;
     }
-    if (entry.count > 1)
-      ++g_stats.skinResolved;
-    entry.used |= 1u << choice[i];
-    const SkinCandidate &candidate = entry.candidates[choice[i]];
+    if (!options.count)
+      continue;
+    if (options.count > 1)
+      several = true;
+    entries[usable] = entries[i];
+    vertices[usable] = vertices[i];
+    ++usable;
+  }
+
+  uint32_t choice[3] = {};
+  SkinDisputes disputes = {};
+  if (several)
+    ChooseSkin(choices, usable, pass, choice, &disputes);
+  SkinAnchor anchor = {};
+  for (uint32_t i = 0; i < usable; ++i) {
+    const uint32_t bit = 1u << i;
+    // A tie is between fractions of one integer point in one pass: any of
+    // them stays inside the point's unit cell, so the first in skinning order
+    // is taken rather than falling back to the integer point
+    if (!(disputes.ties & bit) && ((disputes.distant | disputes.lone) & bit))
+      continue;
+    SkinEntry &entry = *entries[i];
+    const uint32_t index = choices[i].index[choice[i]];
+    entry.used |= 1u << index;
+    const SkinCandidate &candidate = entry.candidates[index];
     out[vertices[i]] = &candidate.offset;
     if (!anchor.valid || Later(anchor.first, candidate.first))
       anchor.first = candidate.first;
@@ -1229,8 +1255,11 @@ void ResolveSkin(const uint8_t *gte, int count, const SkinOffset **out) {
       anchor.last = candidate.last;
     anchor.valid = true;
   }
-  if (anchor.valid)
+  if (anchor.valid) {
+    anchor.pass = pass;
+    anchor.next = sequence + count;
     g_skinAnchor = anchor;
+  }
 }
 
 // RTPS (count 1) or RTPT (count 3) has just run
@@ -1239,8 +1268,10 @@ void CaptureProjections(const uint8_t *gte, uint32_t command, int count) {
   RecordPendingResults();
   const uint32_t sequence = g_sequence;
   g_sequence += count;
+  g_projectedSinceSkin = true;
   if (!(command & kGteShiftFlag)) {
     g_lastBatch.valid = false;
+    g_currentFace.corners = 0;
     for (int i = 0; i < count; ++i)
       PushShadow(0, 0.0f, 0.0f, false);
     return;
@@ -1251,7 +1282,7 @@ void CaptureProjections(const uint8_t *gte, uint32_t command, int count) {
   const ProjectionSetup *preciseSetup =
       PreciseMatrixSetup(gte, setup, &matrixSetup) ? &matrixSetup : nullptr;
   const SkinOffset *skin[3];
-  ResolveSkin(gte, count, skin);
+  ResolveSkin(gte, count, sequence, skin);
   const uint32_t ringCount = GteRead<uint32_t>(gte, rde::gte_fine_ring_count);
   CapturedVertex captured[3];
   for (int i = 0; i < count; ++i) {
@@ -1307,17 +1338,31 @@ void CaptureTransform(const uint8_t *gte, uint32_t command) {
   QueueResult(SkinKey(point[0], point[1], point[2]), offset);
 }
 
-// The fraction of the latest pending result of the point a blend reads,
-// which the blend consumes; nullptr when there is none
-const SkinOffset *ConsumeResult(const int32_t *point) {
+PendingResult &PendingItem(uint32_t index) {
+  return g_pending.items[(g_pending.begin + index) % kPendingResults];
+}
+
+// The fraction of the pending result of the point a blend reads, which the
+// blend consumes; nullptr when there is none. That is the latest result of
+// the point, except for the first point of a chain (chainStart) when the two
+// latest results both have it: the lit and field skinners transform a
+// vertex's first and second joint right before blending them in that order.
+const SkinOffset *ConsumeResult(const int32_t *point, bool chainStart) {
   const uint64_t key = SkinKey(point[0], point[1], point[2]);
+  if (chainStart && g_pending.count >= 2) {
+    const PendingResult &newest = PendingItem(g_pending.count - 1);
+    PendingResult &older = PendingItem(g_pending.count - 2);
+    if (!newest.consumed && !older.consumed && newest.key == key &&
+        older.key == key) {
+      older.consumed = true;
+      return &older.candidate.offset;
+    }
+  }
   for (uint32_t i = g_pending.count; i-- > 0;) {
-    PendingResult &item =
-        g_pending.items[(g_pending.begin + i) % kPendingResults];
+    PendingResult &item = PendingItem(i);
     if (item.consumed || item.key != key)
       continue;
     item.consumed = true;
-    ++g_stats.skinConsumed;
     return &item.candidate.offset;
   }
   return nullptr;
@@ -1326,8 +1371,7 @@ const SkinOffset *ConsumeResult(const int32_t *point) {
 // Drops the pending partial sum of a blend chain that continues
 void RetractResult(uint32_t sequence) {
   for (uint32_t i = g_pending.count; i-- > 0;) {
-    PendingResult &item =
-        g_pending.items[(g_pending.begin + i) % kPendingResults];
+    PendingResult &item = PendingItem(i);
     if (item.candidate.first == sequence) {
       item.consumed = true;
       return;
@@ -1358,7 +1402,6 @@ void CaptureBlend(const uint8_t *gte, uint32_t operation,
     if (!g_blendChain.valid ||
         memcmp(g_blendChain.mac, input.accumulator, sizeof(input.accumulator))) {
       g_blendChain.valid = false;
-      ++g_stats.blendsBroken;
       return;
     }
     chain = g_blendChain;
@@ -1368,7 +1411,7 @@ void CaptureBlend(const uint8_t *gte, uint32_t operation,
   }
 
   static const SkinOffset kNoOffset = {};
-  const SkinOffset *offset = ConsumeResult(input.vector);
+  const SkinOffset *offset = ConsumeResult(input.vector, operation == kGteGpf);
   if (offset)
     chain.precise = true;
   else
@@ -1382,7 +1425,6 @@ void CaptureBlend(const uint8_t *gte, uint32_t operation,
     chain.mac[i] = GteRead<int32_t>(gte, rde::gte_mac1 + i * kGteWordStride);
     if (std::fabs(chain.integer[i] - chain.mac[i]) > 4.0) {
       g_blendChain.valid = false;
-      ++g_stats.blendsBroken;
       return;
     }
     fits = fits && FitsInt16(chain.mac[i]);
@@ -1568,7 +1610,7 @@ struct MarkerRecords {
 // corner words, from the current frame or else the previous one; false when
 // there is none or it is ambiguous
 bool FindFace(const FaceTable &table, const uint32_t *cornerWords,
-              uint32_t corners, PolygonStats *stats, MarkerRecords *out) {
+              uint32_t corners, MarkerRecords *out) {
   uint32_t order[kMaxCorners];
   const FaceKey key = MakeFaceKey(cornerWords, corners, order);
   for (uint32_t age = 0; age < 2; ++age) {
@@ -1586,11 +1628,35 @@ bool FindFace(const FaceTable &table, const uint32_t *cornerWords,
       out->vertices[out->count] = record->vertices[i];
       ++out->count;
     }
-    if (age)
-      ++stats->previous;
     return true;
   }
   return false;
+}
+
+// The record of the face the builder wrote to the primitive at guest offset
+// primitive, from the current frame or else the previous one; false when
+// there is none or its corners are not exactly the polygon's corner words
+bool FindPrimitive(uint32_t primitive, const uint32_t *cornerWords,
+                   uint32_t corners, MarkerRecords *out) {
+  const PrimitiveRecord *record = nullptr;
+  if (g_primitiveFaces.Find(primitive, g_epoch, &record) != Lookup::kFound)
+    return false;
+  bool matches = record->corners == corners;
+  out->count = 0;
+  for (uint32_t i = 0; matches && i < corners; ++i) {
+    const uint32_t word = cornerWords[i];
+    const uint32_t *recorded =
+        std::find(record->words, record->words + corners, word);
+    matches = recorded != record->words + corners;
+    if (!matches ||
+        std::find(out->words, out->words + out->count, word) !=
+            out->words + out->count)
+      continue;
+    out->words[out->count] = word;
+    out->vertices[out->count] = record->vertices[recorded - record->words];
+    ++out->count;
+  }
+  return matches;
 }
 
 // Word records of a polygon's distinct corner words in one frame; the found
@@ -1635,7 +1701,7 @@ void FindCorners(const VertexTable &table, const uint32_t *cornerWords,
 // the others found, undisputed and projected close together. False when
 // nothing applies.
 bool FindWords(bool fine, const uint32_t *cornerWords, uint32_t corners,
-               PolygonStats *stats, MarkerRecords *out) {
+               MarkerRecords *out) {
   const VertexTable &table = fine ? g_fineTable : g_integerTable;
   CornerRecords lookups[2];
   FindCorners(table, cornerWords, corners, g_epoch, &lookups[0]);
@@ -1644,18 +1710,13 @@ bool FindWords(bool fine, const uint32_t *cornerWords, uint32_t corners,
   if (known < lookups[0].distinct) {
     FindCorners(table, cornerWords, corners, g_epoch - 1, &lookups[1]);
     const uint32_t knownBefore = lookups[1].found + lookups[1].ambiguous;
-    if (known && knownBefore)
-      ++stats->split;
     if (knownBefore > known)
       age = 1;
   }
   const CornerRecords &records = lookups[age];
   if (records.found == 0 && records.ambiguous == 0)
     return false;
-  ++stats->polygons;
   const uint32_t absent = records.distinct - records.found - records.ambiguous;
-  stats->absent += absent;
-  stats->ambiguous += records.ambiguous;
 
   bool several = false;
   for (uint32_t i = 0; i < records.found; ++i)
@@ -1665,20 +1726,12 @@ bool FindWords(bool fine, const uint32_t *cornerWords, uint32_t corners,
   uint32_t disputed = 0;
   if (!fine || several)
     disputed = ChooseCandidates(records.entries, records.found, choice, &spread);
-  for (uint32_t i = 0; i < records.found; ++i) {
-    if (disputed & (1u << i))
-      ++stats->ties;
-  }
 
-  if (!fine && spread > kIntegerSpread)
-    ++stats->spread;
   if (records.found == 0 ||
       (!fine && (absent || records.ambiguous > 1 ||
                  (records.ambiguous && records.found < 2) || disputed ||
-                 spread > kIntegerSpread))) {
-    ++stats->rejected;
+                 spread > kIntegerSpread)))
     return false;
-  }
 
   out->count = 0;
   for (uint32_t i = 0; i < records.found; ++i) {
@@ -1688,23 +1741,18 @@ bool FindWords(bool fine, const uint32_t *cornerWords, uint32_t corners,
     out->vertices[out->count] = records.entries[i]->candidates[choice[i]].vertex;
     ++out->count;
   }
-  if (out->count == 0) {
-    ++stats->rejected;
-    return false;
-  }
-  if (age)
-    ++stats->previous;
-  if (out->count == records.distinct)
-    ++stats->complete;
-  else
-    ++stats->partial;
-  return true;
+  return out->count != 0;
 }
 
-// The private command for the polygon at packet; 0 words when nothing
-// applies. Records come from the polygon's projection batch when its corners
-// were projected together, else from the records of the single words.
-uint32_t BuildMarker(const uint32_t *packet, uint32_t *out) {
+// The private command for the polygon at packet, the first command of the
+// primitive at guest offset primitive (kNoPrimitive for a later command); 0
+// words when nothing applies. Records come from the face the builder wrote
+// to the primitive, else from the polygon's projection batch when its
+// corners were projected together, else from the records of the single
+// words.
+constexpr uint32_t kNoPrimitive = 0xFFFFFFFFu;
+uint32_t BuildMarker(const uint32_t *packet, uint32_t primitive,
+                     uint32_t *out) {
   const uint32_t command = packet[0];
   const bool fine = (command >> 29) != 1;
   const uint32_t polygon = fine ? FineToPolygon(command) : command;
@@ -1715,15 +1763,13 @@ uint32_t BuildMarker(const uint32_t *packet, uint32_t *out) {
   for (uint32_t i = 0; i < corners; ++i)
     cornerWords[i] = packet[1 + i * perCorner + (gouraud ? i : 0)];
 
-  PolygonStats *stats = fine ? &g_stats.fine : &g_stats.integer;
   MarkerRecords records;
-  if (FindFace(fine ? g_fineFaces : g_integerFaces, cornerWords, corners,
-               stats, &records)) {
-    ++stats->polygons;
-    ++stats->faces;
-  } else if (!FindWords(fine, cornerWords, corners, stats, &records)) {
+  if (!(fine && primitive != kNoPrimitive &&
+        FindPrimitive(primitive, cornerWords, corners, &records)) &&
+      !FindFace(fine ? g_fineFaces : g_integerFaces, cornerWords, corners,
+                &records) &&
+      !FindWords(fine, cornerWords, corners, &records))
     return 0;
-  }
 
   for (uint32_t i = 0; i < records.count; ++i) {
     const PreciseVertex &vertex = records.vertices[i];
@@ -1746,16 +1792,18 @@ void __fastcall OtAppendHook(VectorU32 *vector, void *, uint32_t *,
                              const uint32_t *first, const uint32_t *last,
                              uint32_t tag) {
   PollHotkey();
-  if (vector->begin == vector->end) {
-    ++g_stats.walks;
-    ReportStats();
-  }
   g_walkSinceCapture = true;
   if (!g_preciseActive) {
     g_vecInsert(vector, vector->end, first, last, tag);
     return;
   }
 
+  // The packet's words follow its tag in the guest RAM image
+  const uint32_t primitive =
+      (static_cast<uint32_t>(reinterpret_cast<uintptr_t>(first) -
+                             (g_moduleBase + rde::guest_ram_base)) -
+       4) &
+      kGuestOffsetMask;
   const uint32_t count = static_cast<uint32_t>(last - first);
   uint32_t copied = 0;
   uint32_t used = 0;
@@ -1766,7 +1814,8 @@ void __fastcall OtAppendHook(VectorU32 *vector, void *, uint32_t *,
       break;
     if (IsPolygon(first[index])) {
       uint32_t marker[kMarkerHeaderWords + kMaxCorners * kRecordWords];
-      const uint32_t markerWords = BuildMarker(first + index, marker);
+      const uint32_t markerWords = BuildMarker(
+          first + index, index == 0 ? primitive : kNoPrimitive, marker);
       if (markerWords) {
         memcpy(g_scratch + used, first + copied, (index - copied) * 4);
         used += index - copied;
@@ -1830,8 +1879,6 @@ const MatrixOffset &CompositionOffset(const MatrixKey &matrix) {
   static const MatrixOffset kNoOffset = {};
   const MatrixOffset *offset = nullptr;
   const Lookup result = g_matrixTable.Use(matrix, g_epoch, &offset);
-  if (result == Lookup::kAmbiguous)
-    ++g_stats.matrixAmbiguous;
   return result == Lookup::kFound ? *offset : kNoOffset;
 }
 
@@ -1868,8 +1915,6 @@ void CaptureComposition(const MatrixKey &parent, const MatrixKey &local,
   }
 
   MatrixOffset offset;
-  bool saturated = false;
-  bool large = false;
   for (int row = 0; row < 3; ++row) {
     for (int column = 0; column < 3; ++column) {
       int64_t product = 0;
@@ -1881,14 +1926,10 @@ void CaptureComposition(const MatrixKey &parent, const MatrixKey &local,
       }
       const int64_t shifted = product >> 12;
       const int16_t entry = result.rotation[row * 3 + column];
-      if (std::clamp<int64_t>(shifted, -32768, 32767) != entry) {
-        ++g_stats.matrixRejected;
+      if (std::clamp<int64_t>(shifted, -32768, 32767) != entry)
         return;
-      }
-      saturated = saturated || !FitsInt16(static_cast<int32_t>(shifted));
       const double dropped =
           std::clamp(precise / 4096.0, -32768.0, 32767.0) - entry;
-      large = large || std::fabs(dropped) > kLargeRotationOffset;
       offset.rotation[row * 3 + column] = static_cast<float>(dropped);
     }
     int64_t product = 0;
@@ -1904,20 +1945,12 @@ void CaptureComposition(const MatrixKey &parent, const MatrixKey &local,
     const double dropped = precise / 4096.0 + parent.translation[row] +
                            parentOffset.translation[row] -
                            static_cast<double>(sum);
-    if (translation != result.translation[row]) {
-      ++g_stats.matrixRejected;
+    if (translation != result.translation[row])
       return;
-    }
-    large = large || std::fabs(dropped) > kLargeTranslationOffset;
     offset.translation[row] = static_cast<float>(dropped);
   }
-  if (saturated)
-    ++g_stats.matrixSaturated;
-  if (large)
-    ++g_stats.matrixLarge;
   ++g_matrixGeneration;
-  CountInsertion(g_matrixTable.Insert(result, offset, g_epoch),
-                 &g_stats.matrixConflicts, &g_stats.matrixRenewed);
+  g_matrixTable.Insert(result, offset, g_epoch);
 }
 
 } // namespace
@@ -1927,6 +1960,7 @@ static const PolygonRecords *g_activeRecords = nullptr;
 static void *g_vec3Make = nullptr;
 static void *g_roundf = nullptr;
 static void *g_compMatrixOriginal = nullptr;
+static void *g_recordFineZ = nullptr;
 static volatile bool g_subpixelActive = false;
 static volatile bool g_batchBoundsActive = false;
 
@@ -1941,6 +1975,7 @@ void UpdateActiveParts() {
     g_epoch += 2;
   g_blendChain.valid = false;
   g_pending.count = 0;
+  g_currentFace.corners = 0;
 }
 } // namespace
 
@@ -2112,6 +2147,46 @@ __declspec(naked) static void CompMatrixHook() {
     mov esp, ebp
     pop ebp
     ret
+  }
+}
+
+static void __cdecl FineZRecorded(uint32_t primitive) {
+  if (g_preciseActive)
+    RecordPrimitiveFace(primitive);
+}
+
+// Replaces the calls of hd_record_fine_z in the model face and weapon ports
+// (ecx = primitive, edx = OT entry, two stack arguments the caller removes),
+// then runs it. Callers may keep SSE values across the call, so all are
+// preserved.
+__declspec(naked) static void FineZHook() {
+  __asm {
+    pushad
+    mov ebx, esp
+    sub esp, 0x80
+    and esp, 0xFFFFFFF0
+    movaps xmmword ptr [esp], xmm0
+    movaps xmmword ptr [esp + 0x10], xmm1
+    movaps xmmword ptr [esp + 0x20], xmm2
+    movaps xmmword ptr [esp + 0x30], xmm3
+    movaps xmmword ptr [esp + 0x40], xmm4
+    movaps xmmword ptr [esp + 0x50], xmm5
+    movaps xmmword ptr [esp + 0x60], xmm6
+    movaps xmmword ptr [esp + 0x70], xmm7
+    push ecx
+    call FineZRecorded
+    add esp, 4
+    movaps xmm0, xmmword ptr [esp]
+    movaps xmm1, xmmword ptr [esp + 0x10]
+    movaps xmm2, xmmword ptr [esp + 0x20]
+    movaps xmm3, xmmword ptr [esp + 0x30]
+    movaps xmm4, xmmword ptr [esp + 0x40]
+    movaps xmm5, xmmword ptr [esp + 0x50]
+    movaps xmm6, xmmword ptr [esp + 0x60]
+    movaps xmm7, xmmword ptr [esp + 0x70]
+    mov esp, ebx
+    popad
+    jmp dword ptr [g_recordFineZ]
   }
 }
 
@@ -2308,6 +2383,27 @@ static bool InstallCompMatrixHook(uintptr_t base) {
                         rde::gte_comp_matrix_impl_prologue) != 0;
 }
 
+// Every call of hd_record_fine_z that verifies; false when none does
+static bool InstallFineZHooks(uintptr_t base) {
+  const uintptr_t sites[] = {
+      base + rde::hook_native_port_800a067c_rep_plus_a9f,
+      base + rde::hook_native_port_800a0bc4_rep_plus_b11,
+      base + rde::hook_native_port_800a3ce4_rep_plus_777,
+      base + rde::hook_native_port_800a3f54_rep_plus_6db,
+      base + rde::hook_native_port_800a41e8_rep_plus_959,
+      base + rde::hook_native_port_800a44d4_rep_plus_834,
+      base + rde::hook_native_port_800a6da4_rep_plus_97a,
+      base + rde::hook_native_port_800a76d0_rep_plus_d79};
+  g_recordFineZ = reinterpret_cast<void *>(base + rde::hd_record_fine_z);
+  bool installed = false;
+  for (uintptr_t site : sites) {
+    if (VerifyCallTo(site, base + rde::hd_record_fine_z, "PGXP fine-Z call") &&
+        InstallCallHook(site, reinterpret_cast<void *>(FineZHook), 5))
+      installed = true;
+  }
+  return installed;
+}
+
 // GPU side, GTE capture and NCLIP of the precise positions
 static bool InstallPreciseHooks(uintptr_t base) {
   const uintptr_t gteSite = base + rde::gte_exec_cop2_plus_18;
@@ -2363,6 +2459,9 @@ static bool InstallPreciseHooks(uintptr_t base) {
     std::cout << "[PGXP] Fine NCLIP not corrected" << std::endl;
   if (!InstallCompMatrixHook(base))
     std::cout << "[PGXP] Precise matrices not available" << std::endl;
+  if (!InstallFineZHooks(base))
+    std::cout << "[PGXP] Model faces not matched to their primitives"
+              << std::endl;
 
   if (!InstallCallHook(gteSite, reinterpret_cast<void *>(GteExecCommandHook),
                        5)) {
@@ -2372,9 +2471,8 @@ static bool InstallPreciseHooks(uintptr_t base) {
   return true;
 }
 
-bool ApplyPgxpPatch(uintptr_t base, bool stats) {
+bool ApplyPgxpPatch(uintptr_t base) {
   g_moduleBase = base;
-  g_statsEnabled = stats;
 
   const uintptr_t walkSite = base + rde::dma_gpu_ot_walk_plus_ba;
   if (!VerifyCallTo(walkSite, base + rde::vec_u32_insert_range,
