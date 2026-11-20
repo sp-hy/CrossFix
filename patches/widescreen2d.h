@@ -1,9 +1,8 @@
 #pragma once
 #include <Windows.h>
 
-// Initialize the ASM hook for widescreen 2D background transformation
-// This hooks the instruction at CHRONOCROSS.exe+1CCF93 to modify image
-// dimensions
+// Install the HD background layer hook (CHRONOCROSS.exe+1CCF51) and register
+// the guest hooks that keep the scroll clamp in step with the room's limits
 bool InitWidescreen2DHook();
 
 // Set the widescreen ratio for 2D background transformation
@@ -12,6 +11,3 @@ void SetWidescreen2DRatio(float ratio);
 
 // Enable or disable 2D widescreen transformation
 void SetWidescreen2DEnabled(bool enabled);
-
-// Enable or disable boundary overrides (high-frequency write loop)
-void SetBoundaryOverridesEnabled(bool enabled);

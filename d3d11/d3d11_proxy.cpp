@@ -1,5 +1,6 @@
 #include "d3d11_proxy.h"
 #include "../patches/viewportwidescreenfix.h"
+#include "../patches/pgxpshaders.h"
 #include "../patches/texturedump.h"
 #include "../patches/sampleroverride.h"
 #include "../patches/upscale4k.h"
@@ -79,6 +80,15 @@ static DWORD SafeApplySamplerOverridePatch(ID3D11Device *pDevice) {
   }
 }
 
+static DWORD SafeApplyPgxpShaderHooks(ID3D11Device *pDevice) {
+  __try {
+    ApplyPgxpShaderHooks(pDevice);
+    return 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return GetExceptionCode();
+  }
+}
+
 static DWORD SafeApplyUpscale4KPatch(ID3D11Device *pDevice,
                                      ID3D11DeviceContext *pContext) {
   __try {
@@ -127,6 +137,12 @@ static void ApplyHooksWithProtection(ID3D11Device *pDevice,
     std::cout << "Warning: Sampler override hooks failed (0x" << std::hex
               << exCode << std::dec << "), continuing without them"
               << std::endl;
+  }
+
+  exCode = SafeApplyPgxpShaderHooks(pDevice);
+  if (exCode != 0) {
+    std::cout << "Warning: PGXP shader hooks failed (0x" << std::hex << exCode
+              << std::dec << "), continuing without them" << std::endl;
   }
 
   // Apply upscale patch (includes viewport widescreen fix when enabled)

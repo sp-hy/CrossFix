@@ -1,5 +1,6 @@
 #include "saveselector.h"
 #include "../utils/memory.h"
+#include "../utils/rde_symbols.h"
 #include "dialog.h"
 #include <iostream>
 
@@ -130,7 +131,7 @@ __declspec(naked) static void SaveSelectorHook() {
          // Overwritten instructions: mov [edi],edx; add edi,4
     mov [edi], edx
     add edi, 4
-     // Return without clobbering eax (game may use it at 2602DE)
+     // Return without clobbering eax (game may use it after the loop step)
     push dword ptr [g_saveSelectorReturnAddr]
     ret
   }
@@ -138,26 +139,35 @@ __declspec(naked) static void SaveSelectorHook() {
 
 bool ApplySaveSelectorPatch(uintptr_t base,
                             const float *aspectRatioMultiplier) {
-  // CHRONOCROSS.exe+2602D7 - Save Selector
+  // crt_memmove_plus_507 - Save Selector
   // Original: mov edx,[esi] (2) + mov [edi],edx (2) + add edi,04 (3) = 7 bytes
   // When esi matches one of the target addresses, we divide the 2-byte value
   // by the aspect ratio multiplier before storing.
   // Original + new addresses grouped. Group 1: 73,107,141,175,209,243,277,311.
   // Group 2: 106,140,174,208,242,276,310,344
-  const uintptr_t targetOffsets[] = {
-      0xC1E55C, 0xC1E560, 0xC1E564, 0xC1E568, 0xC1E578, 0xC1E57C, // original
-      0xC223DC, 0xC223E0, 0xC223E4, 0xC223E8, 0xC223F8, 0xC223FC, // original
-      0xC1EE1C, 0xC1EE20, 0xC1EE24, 0xC1EE28, 0xC1EE38, 0xC1EE3C, // new
-      0xC22C9C, 0xC22CA0, 0xC22CA4, 0xC22CA8, 0xC22CB8, 0xC22CBC  // new
-  };
+  // The two original tables come first, then the two new ones.
+  const uintptr_t tableOffsets[] = {
+      rde::save_menu_quad_table_a, rde::save_menu_quad_table_b,
+      rde::save_menu_quad_table_c, rde::save_menu_quad_table_d};
+  const uintptr_t rowOffsets[] = {0x0, 0x4, 0x8, 0xC, 0x1C, 0x20};
 
-  for (int i = 0; i < 24; i++) {
-    g_saveSelectorTargets[i] = (uint32_t)(base + targetOffsets[i]);
+  for (int table = 0; table < 4; table++) {
+    for (int row = 0; row < 6; row++) {
+      g_saveSelectorTargets[table * 6 + row] =
+          (uint32_t)(base + tableOffsets[table] + rowOffsets[row]);
+    }
   }
-  g_saveSelectorReturnAddr = base + 0x2602DE;
+
+  uintptr_t hookAddr = base + rde::crt_memmove_plus_507;
+  g_saveSelectorReturnAddr = hookAddr + 7;
   g_saveSelectorAspectRatioMultiplierPtr = aspectRatioMultiplier;
 
-  uintptr_t hookAddr = base + 0x2602D7;
+  const unsigned char original[7] = {0x8B, 0x16, 0x89, 0x17, 0x83, 0xC7, 0x04};
+  if (!VerifyBytes(hookAddr, original, sizeof(original),
+                   "Save selector hook")) {
+    return false;
+  }
+
   if (!InstallJmpHook(hookAddr, (void *)&SaveSelectorHook, 7)) {
     std::cout << "Failed to apply save selector patch" << std::endl;
     return false;

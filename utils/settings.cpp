@@ -232,23 +232,17 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# ============================================\n\n";
   file << "# Enable widescreen.\n";
   file << "widescreen_enabled=1\n\n";
-  file << "# Force camera boundaries in rooms .\n";
-  file << "# Disable if it breaks camera placement in a scene.\n";
-  file << "boundary_overrides=1\n\n";
 
   // --- Performance / timing ---
   file << "# ============================================\n";
   file << "#   Performance / timing\n";
   file << "# ============================================\n\n";
-  file
-      << "# Double FPS mode: 60 FPS in field (use with in-game slowdown/F1).\n";
+  file << "# 60 FPS mode: the field runs at 60 FPS at normal speed "
+          "(battles already do).\n";
+  file << "# Menus, movies and the fast / slow modes keep their own pace.\n";
   file << "# Disable if using another tool (e.g. SpecialK, GameScope, etc).\n";
-  file
-      << "# Disable any vsync / framerate enforment if using a 60hz monitor.\n";
-  file << "# 0 = 30 field / 60 battle,  1 = 60 everywhere\n";
-  file << "double_fps_mode=1\n\n";
-  file << "# Hide the slow-motion icon when using double FPS / slowdown.\n";
-  file << "hide_slow_icon=1\n\n";
+  file << "# 0 = 30 field / 60 battle,  1 = 60 field and battle\n";
+  file << "60fps_mode=1\n\n";
   file << "# Keep running when window loses focus (no pause, music "
           "continues).\n";
   file << "# 0 = pause when inactive,  1 = keep running\n";
@@ -270,6 +264,14 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# 0 = default filtering,  1 = pixelated, no bleed\n";
   file << "sampler_force_point=0\n\n";
 
+  // --- PGXP ---
+  file << "# ============================================\n";
+  file << "#   PGXP (geometry precision)\n";
+  file << "# ============================================\n\n";
+  file << "# Precise 3D geometry: less wobble, perspective-correct textures "
+          "(F6 toggles).\n";
+  file << "pgxp_enabled=1\n\n";
+
   // --- Modding ---
   file << "# ============================================\n";
   file << "#   Modding\n";
@@ -279,8 +281,8 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "mod_loader_enabled=1\n\n";
   file << "# Load replacement textures from mods/textures (by hash).\n";
   file << "texture_replace_enabled=0\n\n";
-  file << "# Play custom voice MP3s during dialog "
-          "(mods/voices/<sceneId>/<dialog>-<page>-<speaker>.mp3).\n";
+  file << "# Play voice-pack MP3s for field and battle dialogue "
+          "(mods/<pack>/voices/... or mods/voices/...).\n";
   file << "# 0 = off, 1 = on\n";
   file << "voices_enabled=0\n";
 
@@ -293,10 +295,13 @@ bool Settings::HasKey(const std::string &key) const {
 }
 
 std::vector<std::string> Settings::GetRequiredKeys() {
-  return {"widescreen_enabled",      "double_fps_mode",
-          "hide_slow_icon",          "disable_pause_on_focus_loss",
-          "upscale_scale",           "texture_dump_enabled",
-          "texture_replace_enabled", "upscale_setup_completed",
-          "boundary_overrides",      "mod_loader_enabled",
-          "sampler_force_point",     "voices_enabled"};
+  return {"widescreen_enabled",
+          "disable_pause_on_focus_loss",
+          "upscale_scale",
+          "texture_dump_enabled",
+          "texture_replace_enabled",
+          "upscale_setup_completed",
+          "mod_loader_enabled",
+          "sampler_force_point",
+          "voices_enabled"};
 }

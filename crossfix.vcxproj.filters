@@ -33,6 +33,12 @@
     <ClCompile Include="patches\pausefix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="patches\pgxp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="patches\pgxpshaders.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="utils\memory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -66,6 +72,15 @@
     <None Include="d3d11\d3d11.def">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="patches\shaders\build_shaders.bat">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="patches\shaders\pgxp_poly_ps.hlsl">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="patches\shaders\pgxp_poly_vs.hlsl">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="d3d11\d3d11_proxy.h">
@@ -83,7 +98,19 @@
     <ClInclude Include="patches\pausefix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="patches\pgxp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="patches\pgxpshaders.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="patches\shaders\pgxp_shaders.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="utils\memory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="utils\rde_symbols.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="utils\settings.h">

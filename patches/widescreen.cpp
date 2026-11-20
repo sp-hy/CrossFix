@@ -1,5 +1,6 @@
 #include "widescreen.h"
 #include "../utils/memory.h"
+#include "../utils/rde_symbols.h"
 #include "battleuimenu.h"
 #include "dialog.h"
 #include "widescreen2d.h"
@@ -68,11 +69,17 @@ bool ApplyWidescreenPatch(uintptr_t base, float aspectRatio) {
   SetWidescreen2DRatio(g_widescreenRatio3D);
 
   // Calculate the addresses to patch
-  uintptr_t addr1 = base + 0x18EE7B;
-  uintptr_t addr2 = base + 0x18AD25;
+  uintptr_t addr1 = base + rde::gte_ofx_add_b;
+  uintptr_t addr2 = base + rde::gte_ofx_add_a;
 
   // Save original bytes if not already saved
   if (!g_originalBytesSaved) {
+    const unsigned char original[8] = {0x8B, 0x46, 0x60, 0x99,
+                                       0x03, 0xF8, 0x13, 0xCA};
+    if (!VerifyBytes(addr1, original, sizeof(original), "Widescreen hook 1") ||
+        !VerifyBytes(addr2, original, sizeof(original), "Widescreen hook 2")) {
+      return false;
+    }
     memcpy(g_originalBytes1, (void *)addr1, 8);
     memcpy(g_originalBytes2, (void *)addr2, 8);
     g_originalBytesSaved = true;
@@ -98,10 +105,8 @@ bool ApplyWidescreenPatch(uintptr_t base, float aspectRatio) {
 // Auto-detect and optionally return the detected aspect ratio
 bool ApplyWidescreenPatchAuto(uintptr_t base, float *outAspectRatio) {
   // Memory addresses for screen resolution
-  // CHRONOCROSS.exe+E2F488 - screen res X
-  // CHRONOCROSS.exe+E2F48C - screen res Y
-  uintptr_t resXAddr = base + 0xE2F488;
-  uintptr_t resYAddr = base + 0xE2F48C;
+  uintptr_t resXAddr = base + rde::render_screen_width;
+  uintptr_t resYAddr = base + rde::render_screen_height;
 
   // Read the resolution values from memory with retry logic
   int resX = 0;
@@ -160,8 +165,8 @@ bool RestoreDefaultBehavior(uintptr_t base) {
     return false;
   }
 
-  uintptr_t addr1 = base + 0x18EE7B;
-  uintptr_t addr2 = base + 0x18AD25;
+  uintptr_t addr1 = base + rde::gte_ofx_add_b;
+  uintptr_t addr2 = base + rde::gte_ofx_add_a;
 
   // Restore original bytes
   if (!WriteMemory(addr1, g_originalBytes1, 8)) {
@@ -192,10 +197,10 @@ bool RestoreDefaultBehavior(uintptr_t base) {
 // Thread function for dynamic resolution monitoring
 DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
   uintptr_t base = (uintptr_t)param;
-  uintptr_t resXAddr = base + 0xE2F488;
-  uintptr_t resYAddr = base + 0xE2F48C;
+  uintptr_t resXAddr = base + rde::render_screen_width;
+  uintptr_t resYAddr = base + rde::render_screen_height;
   uintptr_t screenTypeAddr =
-      base + 0xE2F494; // Screen type: 0 = normal, 1 = full
+      base + rde::render_screen_type; // Screen type: 0 = normal, 1 = full
 
   // Initialize state
   int lastResX = 0;
@@ -253,7 +258,7 @@ DWORD WINAPI ResolutionMonitorThread(LPVOID param) {
       // Force screen type to full (1) when in widescreen mode
       if (g_wasWidescreen) {
         // Check if FMV is playing
-        uintptr_t isFMVPlayingAddr = base + 0x71A9EC;
+        uintptr_t isFMVPlayingAddr = base + rde::fld_movie_active;
         int isFMVPlaying = *(int *)isFMVPlayingAddr;
 
         // Set screenType to 0 if FMV is playing, otherwise 1

@@ -1,5 +1,6 @@
 #include "dialog.h"
 #include "../utils/memory.h"
+#include "../utils/rde_symbols.h"
 #include <Windows.h>
 #include <iostream>
 
@@ -23,7 +24,7 @@ static uintptr_t g_cursorWidthAddr = 0;
 // Main menu flag: when true, dialog patches are disabled (values reset to 4:3).
 // Set to same as game menu below if no separate main-menu address is known.
 static uintptr_t g_mainMenuOpenAddr = 0;
-// Game menu flag: byte at base+0x82F120 is 1 when in-game menu is open.
+// Game menu flag: rde::menu_open_flag is 1 when in-game menu is open.
 static uintptr_t g_gameMenuOpenAddr = 0;
 
 bool IsMainMenuOpen() {
@@ -165,40 +166,59 @@ extern "C" __declspec(naked) void CursorPos2Hook() {
 }
 
 bool ApplyDialogPatch(uintptr_t base) {
-  g_cursorWidthAddr = base + 0x415F8;
-  g_gameMenuOpenAddr = base + 0x82F120;
-  g_mainMenuOpenAddr = base + 0x18B2C5D;
+  g_cursorWidthAddr = base + rde::msg_frame_build_pieces_plus_1668;
+  g_gameMenuOpenAddr = base + rde::menu_open_flag;
+  g_mainMenuOpenAddr = base + rde::sys_game_paused;
   bool success = true;
 
+  const float originalCursorWidth = 70.0f;
+  if (!VerifyBytes(g_cursorWidthAddr, &originalCursorWidth,
+                   sizeof(originalCursorWidth), "Dialog cursor width")) {
+    g_cursorWidthAddr = 0;
+    success = false;
+  }
+
   // ============================================================
-  // Patch 1: Dialog Text X Scale Hook at CHRONOCROSS.exe+195CD6
+  // Patch 1: Dialog Text X Scale Hook at hd_sprite_quad_build_plus_1f6
   // Original: mulps xmm1,xmm4 (0F 59 CC) + 3 more bytes
   // We hook to scale the X component of dialog text positions
   // ============================================================
-  uintptr_t hookAddr = base + 0x195CD6;
+  uintptr_t hookAddr = base + rde::hd_sprite_quad_build_plus_1f6;
   g_dialogXScaleReturnAddr = hookAddr + 6; // After jmp(5) + nop(1)
 
-  if (!InstallJmpHook(hookAddr, (void *)&DialogTextXScaleHook, 6)) {
+  const unsigned char xScaleOriginal[6] = {0x0F, 0x59, 0xCC, 0x0F, 0x28, 0xC1};
+  if (!VerifyBytes(hookAddr, xScaleOriginal, sizeof(xScaleOriginal),
+                   "Dialog X scale hook")) {
+    success = false;
+  } else if (!InstallJmpHook(hookAddr, (void *)&DialogTextXScaleHook, 6)) {
     std::cout << "Failed to apply dialog X scale hook" << std::endl;
     success = false;
   }
 
   // ============================================================
   // Patch 2: Letter Spacing
-  // CHRONOCROSS.exe+44D11 - F3 0F59 15 E4B84D00 - mulss
-  // xmm2,[CHRONOCROSS.exe+2CB8E4] Redirect to our g_letterSpacing variable
+  // msg_layout_glyphs_plus_7d5 - mulss xmm2,[rdata_f32_0_45]
+  // Redirect to our g_letterSpacing variable
   // ============================================================
-  if (!RedirectOperand(base + 0x44D11 + 4, &g_letterSpacing)) {
+  if (!VerifyOperand(base + rde::msg_layout_glyphs_plus_7d5,
+                     base + rde::rdata_f32_0_45, "Letter spacing")) {
+    success = false;
+  } else if (!RedirectOperand(base + rde::msg_layout_glyphs_plus_7d5,
+                              &g_letterSpacing)) {
     std::cout << "Failed to apply letter spacing redirection patch"
               << std::endl;
     success = false;
   }
 
   // ============================================================
-  // Patch 2b: mulss xmm0,[CHRONOCROSS.exe+2CB8A4] at +44BD9
+  // Patch 2b: mulss xmm0,[rdata_f32_0_35] at msg_layout_glyphs_plus_69d
   // Base value 0.35 - redirect to our g_dialogMul35 variable -- for Japanese
   // ============================================================
-  if (!RedirectOperand(base + 0x44BD9 + 4, &g_dialogMul35)) {
+  if (!VerifyOperand(base + rde::msg_layout_glyphs_plus_69d,
+                     base + rde::rdata_f32_0_35, "Dialog mul 0.35")) {
+    success = false;
+  } else if (!RedirectOperand(base + rde::msg_layout_glyphs_plus_69d,
+                              &g_dialogMul35)) {
     std::cout << "Failed to apply dialog mul 0.35 redirection patch"
               << std::endl;
     success = false;
@@ -206,53 +226,68 @@ bool ApplyDialogPatch(uintptr_t base) {
 
   // ============================================================
   // Patch 3: Character Portrait Width
-  // CHRONOCROSS.exe+415B9 - 66 0F6E 0D 48F40B01 - movd xmm1,
-  // [CHRONOCROSS.exe+E2F448]
+  // msg_frame_build_pieces_plus_162d - movd xmm1,[render_size_h]
   // ============================================================
-  if (!RedirectOperand(base + 0x415B9 + 4, &g_portraitWidth)) {
+  if (!VerifyOperand(base + rde::msg_frame_build_pieces_plus_162d,
+                     base + rde::render_size_h, "Portrait width")) {
+    success = false;
+  } else if (!RedirectOperand(base + rde::msg_frame_build_pieces_plus_162d,
+                              &g_portraitWidth)) {
     std::cout << "Failed to apply portrait width patch" << std::endl;
     success = false;
   }
 
   // ============================================================
-  // Patch 4a: Dialog width load at CHRONOCROSS.exe+39B68
+  // Patch 4a: Dialog width load at msg_window_place_plus_328
   // Original: mov eax,[edi+0004DBD8]. We scale the value in edi+4DBD8 in place
   // before it goes into eax, then jmp to 39B6E.
   // ============================================================
-  uintptr_t widthHookAddr = base + 0x39B68;
+  uintptr_t widthHookAddr = base + rde::msg_window_place_plus_328;
   g_dialogWidthReturnAddr = widthHookAddr + 6; // After 6-byte mov
 
-  if (!InstallJmpHook(widthHookAddr, (void *)&DialogWidthHook, 6)) {
+  const unsigned char widthOriginal[6] = {0x8B, 0x87, 0xD8, 0xDB, 0x04, 0x00};
+  if (!VerifyBytes(widthHookAddr, widthOriginal, sizeof(widthOriginal),
+                   "Dialog width hook")) {
+    success = false;
+  } else if (!InstallJmpHook(widthHookAddr, (void *)&DialogWidthHook, 6)) {
     std::cout << "Failed to apply dialog width hook" << std::endl;
     success = false;
   }
 
   // ============================================================
-  // Patch 4b: Cursor position at CHRONOCROSS.exe+39BD1
+  // Patch 4b: Cursor position at msg_window_place_plus_391
   // Original: mov eax,[edi+40] - cursor in edi+40. Scale eax by aspect.
   // Overwrite 5 bytes (3-byte mov + 2 of next); we re-execute next mov in hook.
   // ============================================================
-  uintptr_t cursorPosHookAddr = base + 0x39BD1;
+  uintptr_t cursorPosHookAddr = base + rde::msg_window_place_plus_391;
   g_cursorPosReturnAddr =
       cursorPosHookAddr +
       9; // After overwritten 5 bytes + re-executed mov (6 bytes) = 39BDA
 
-  if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosHook, 5)) {
+  const unsigned char cursorPosOriginal[5] = {0x8B, 0x47, 0x40, 0x89, 0x87};
+  if (!VerifyBytes(cursorPosHookAddr, cursorPosOriginal,
+                   sizeof(cursorPosOriginal), "Cursor position hook")) {
+    success = false;
+  } else if (!InstallJmpHook(cursorPosHookAddr, (void *)&CursorPosHook, 5)) {
     std::cout << "Failed to apply cursor position hook" << std::endl;
     success = false;
   }
 
   // ============================================================
-  // Patch 4c: Cursor position at CHRONOCROSS.exe+522B0
+  // Patch 4c: Cursor position at msg_window_state_restore_plus_3b0
   // Original: mov eax,[ecx+esi+40] then mov [esi+001CA094],eax. We scale
   // [ecx+esi+40] in place before it goes into eax. Overwrite 5 bytes.
   // ============================================================
-  uintptr_t cursorPos2HookAddr = base + 0x522B0;
+  uintptr_t cursorPos2HookAddr = base + rde::msg_window_state_restore_plus_3b0;
   g_cursorPos2ReturnAddr =
       cursorPos2HookAddr +
       10; // After 5 overwritten + re-executed mov (6 bytes) = 522BA
 
-  if (!InstallJmpHook(cursorPos2HookAddr, (void *)&CursorPos2Hook, 5)) {
+  const unsigned char cursorPos2Original[5] = {0x8B, 0x44, 0x31, 0x40, 0x89};
+  if (!VerifyBytes(cursorPos2HookAddr, cursorPos2Original,
+                   sizeof(cursorPos2Original), "Cursor position hook 2")) {
+    success = false;
+  } else if (!InstallJmpHook(cursorPos2HookAddr, (void *)&CursorPos2Hook, 5)) {
     std::cout << "Failed to apply cursor position hook 2" << std::endl;
     success = false;
   }

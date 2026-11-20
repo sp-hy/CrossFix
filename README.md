@@ -12,12 +12,8 @@ Supports the latest Steam release v1.0.1.0
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 - **Mod Loader** - Load replacement assets from a `mods/` folder instead of editing .dat files (experimental)
 - **Texture Replacer** - Replace in-game textures with custom .png or .dds files in `mods/textures/` (hash-based filenames; use texture dump to discover hashes)
-- **Voices** - Play custom MP3 voice lines during dialog; files are loaded from `mods/voices/` by scene, dialog index, page, and speaker
-
-## Todo
-
-- PXGP
-- Voices (battle)
+- **Voices** - Play custom MP3 voice lines during field and battle dialogue; voice packs in `mods/<pack>/voices/` (or `mods/voices/`) by scene, dialog index, page, and speaker, the same layout OpenCross reads
+- **PGXP** - Precise sub-pixel 3D vertex positions, culling correction and perspective-correct textures
 
 ## Installation
 
@@ -45,18 +41,12 @@ CrossFix creates a `settings.ini` in your game folder with default values. You c
 # Dynamic widescreen (auto-adjusts to resolution/aspect ratio).
 widescreen_enabled=1
 
-# Force camera boundaries in rooms . Disable if it breaks camera placement.
-boundary_overrides=1
-
 # ============================================
 #   Performance / timing
 # ============================================
 
-# Double FPS mode: 60 FPS in field. Use with in-game slowdown (F1). 0 = 30 field / 60 battle, 1 = 60 everywhere
-double_fps_mode=1
-
-# Hide the slow-motion icon when using double FPS / slowdown
-hide_slow_icon=1
+# 60 FPS mode: the field runs at 60 FPS at normal speed (battles already do). 0 = 30 field / 60 battle, 1 = 60 field and battle
+60fps_mode=1
 
 # Keep running when window loses focus (no pause, music continues). 0 = pause when inactive, 1 = keep running
 disable_pause_on_focus_loss=1
@@ -75,6 +65,13 @@ texture_dump_enabled=0
 sampler_force_point=0
 
 # ============================================
+#   PGXP (geometry precision)
+# ============================================
+
+# Precise 3D geometry: less wobble, perspective-correct textures (F6 toggles)
+pgxp_enabled=1
+
+# ============================================
 #   Modding
 # ============================================
 
@@ -84,16 +81,21 @@ mod_loader_enabled=1
 # Load replacement textures from mods/textures (by hash)
 texture_replace_enabled=0
 
-# Play custom voice MP3s during dialog (mods/voices/<sceneId>/<dialog>-<page>-<speaker>.mp3)
+# Play voice-pack MP3s for field and battle dialogue (mods/<pack>/voices/... or mods/voices/...)
 voices_enabled=0
 ```
 
 ## Notes
 
-- **Double FPS:** Enable in-game slowdown (press F1) when using `double_fps_mode=1`. Use `hide_slow_icon=1` to hide the slow-motion icon.
+- **60 FPS mode:** With `60fps_mode=1` the field draws 60 frames a second at normal speed while you walk around freely. Room changes, the first moments in a new room, movies, the title and ending keep the game's own pace (30 FPS), as do menus and shops. RDE's fast (F2) and slow (F1) modes work as usual; while either is on, the field runs at 30 FPS. Battles already run at 60 FPS. When a character turns to start a scripted walk, the field runs a single frame at the normal pace so the turn is handed over as at 30 FPS; without it such characters froze in place in cutscenes.
+- **Frame stats:** add `fps_stats=1` to settings.ini to print, every 300 field frames, how many ran at a clean 60 fps, how many missed a vblank and how many ran at the normal 30 fps pace (and how many of those were turn hand-offs). Battles print the same per 300 battle frames. The game always presents 60 times a second, so an FPS overlay cannot show this.
+- **PGXP:** The game projects 3D vertices to whole pixels (most models and rooms to a quarter pixel in RDE), which makes geometry wobble. With `pgxp_enabled=1` (the default) each projection is recomputed at full precision, including the fractions the game drops when it animates models and combines their joint and object matrices, and the polygons that use it are drawn at the precise position, with perspective-correct textures and culling decided from the precise positions. Polygons the game builds in 2D (menus, sprites) are left alone. F6 switches PGXP off and on while you play (with the game window focused), to compare with the original picture.
 - **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Set `mod_loader_enabled=1` in settings.ini (default). Texture dump disables the mod loader while active.
 - **Texture Replacer:** (1) Set `texture_dump_enabled=1`, run the game, and visit the area/UI you want to mod—textures are dumped to `dump/` with filenames like `256x256_0123456789abcdef.dds`. (2) Edit or create a replacement keeping the same name, or use the hash in a new file named `WIDTHxHEIGHT_<16hex>.png` or `.dds` (e.g. `256x256_0123456789abcdef.png`). (3) Put replacement files in `mods/textures/`. (4) Set `texture_dump_enabled=0` and `texture_replace_enabled=1`, then launch the game.
-- **Voices:** With `voices_enabled=1`, the mod plays MP3 files from `mods/voices/` when dialog is shown. Place files as `mods/voices/<sceneId>/<dialogIndex>-<page>-<characterName>.mp3` (e.g. `mods/voices/123/5-0-serge.mp3` for scene 123, dialog 5, first page, Serge). The game logs the requested path to the console if a file is missing.
+- **Voices:** With `voices_enabled=1`, the mod plays an MP3 when a dialogue page is shown and stops it when the page changes or the window closes. Every folder in `mods/` is searched in name order (case-insensitive): `mods/<pack>/voices/...`, or `mods/voices/...` for a folder called `voices`; the first file found wins. MP3 files only; packed (.zip) mods are not searched.
+  - **Field:** `voices/<scene>/<dialog>-<page>-<character>.mp3` (e.g. `voices/27/15-0-npc.mp3`). `scene` is the text room id (the map id, 1000 + the map id in the `fin_` ending rooms; `fin_19` tries 1501, then 501), `dialog` the message index in the room, `page` the 0-based page. `character` is the speaker's lowercase name (`serge`, `kid`, `guile` ... `orcha`, a number past the table); the names tried, first found wins: `npc` for no speaker or speaker 0 (else the speaker's name), then `serge` for speaker 0, then the character of the line's leading name tag (`{KID%}` ...), then, for a line without a speaker, the last speaker of the same room.
+  - **Battle:** `voices/battle/<battle id>/<msg>-<page>.mp3` (e.g. `voices/battle/386/0-0.mp3`). `battle id` is the battle's own id (`evt<id>.pac`, not the id whose text rows it reads), `msg` the battle script message index. OpenCross also reads `<msg>-<page>-<unit>.mp3` first; CrossFix reads only the speaker-less form.
+  - The console logs each played file and, once, each line with no file.
 
 ## Acknowledgements
 

@@ -5,6 +5,7 @@
 #include "patches/misc.h"
 #include "patches/modloader.h"
 #include "patches/pausefix.h"
+#include "patches/pgxp.h"
 #include "patches/saveselector.h"
 #include "patches/upscale4k.h"
 #include "patches/voices.h"
@@ -53,7 +54,7 @@ DWORD WINAPI MainThread(LPVOID param) {
   freopen_s(&fin, "CONIN$", "r", stdin);
 
   std::cout << "=========================" << std::endl;
-  std::cout << "|     CrossFix  v1.0    |" << std::endl;
+  std::cout << "|     CrossFix  v1.1    |" << std::endl;
   std::cout << "=========================" << std::endl;
   std::cout << std::endl;
   std::cout << "github.com/sp-hy/CrossFix" << std::endl;
@@ -133,26 +134,14 @@ DWORD WINAPI MainThread(LPVOID param) {
 
     // Always start dynamic monitoring to handle resolution changes
     StartDynamicWidescreenMonitoring(base);
-
-    // Apply boundary overrides if enabled in settings
-    if (settings.GetBool("boundary_overrides", true)) {
-      SetBoundaryOverridesEnabled(true);
-    }
     std::cout << "[Mod] Widescreen patches applied" << std::endl;
   } else {
     std::cout << "Widescreen patches disabled in settings" << std::endl;
   }
 
-  bool anyFpsPatch = false;
-  if (settings.GetBool("double_fps_mode", false)) {
-    ApplyDoubleFpsPatch(base);
-    anyFpsPatch = true;
-  }
-  if (settings.GetBool("hide_slow_icon", true)) {
-    ApplyHideSlowIconPatch(base);
-    anyFpsPatch = true;
-  }
-  if (anyFpsPatch) {
+  if (settings.GetBool("60fps_mode",
+                       settings.GetBool("double_fps_mode", true))) {
+    Apply60FpsPatch(base, settings.GetBool("fps_stats", false));
     std::cout << "[Mod] FPS Patches applied" << std::endl;
   }
 
@@ -167,6 +156,10 @@ DWORD WINAPI MainThread(LPVOID param) {
 
   if (settings.GetBool("voices_enabled", false)) {
     ApplyVoicesPatch(base);
+  }
+
+  if (PgxpEnabled(settings)) {
+    ApplyPgxpPatch(base);
   }
 
   return 0;

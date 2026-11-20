@@ -1,52 +1,94 @@
 #define DR_MP3_IMPLEMENTATION
 #include "voices.h"
 #include "../utils/memory.h"
+#include "../utils/rde_symbols.h"
 
 #include <Windows.h>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <dr_mp3.h>
+#include <fstream>
 #include <iostream>
 #include <mmsystem.h>
+#include <set>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "winmm.lib")
 
-// =============================================================================
-// Game Memory Offsets (relative to CHRONOCROSS.exe base address)
-// =============================================================================
-namespace Offsets {
-constexpr uintptr_t HOOK_PROLOGUE = 0x5188F; // Hook entry point: push ebx
-constexpr uintptr_t HOOK_EPILOGUE =
-    0x518AD; // Hook exit point: mov ecx,[1891C18]
-constexpr uintptr_t AFTER_EPILOGUE = 0x518B3; // Return address after hook
-constexpr uintptr_t PAGINATION = 0xEBFD98;    // Dialog page index (4 bytes)
-constexpr uintptr_t AVATAR_ID = 0x35DD00;     // Current avatar ID (4 bytes)
-
-constexpr uintptr_t CALL1_TARGET = 0x26D60A; // First call destination
-constexpr uintptr_t CALL2_TARGET = 0x51580;  // Second call destination
-
-constexpr int PROLOGUE_SIZE = 30; // Bytes between prologue and epilogue
-} // namespace Offsets
+// Voice lines for field and battle dialogue, in the voice-pack layout OpenCross
+// uses (mods\<pack>\voices\...). The game-thread hooks only record which line
+// opened; a worker thread follows its window's page and open state and does
+// all file lookup, MP3 decoding and playback.
 
 // =============================================================================
 // Global State
 // =============================================================================
 namespace State {
-struct DialogContext {
-  uint32_t sceneId = 0;
-  uint32_t characterId = 0;
-  uint32_t dialogIndex = 0;
-} current, last;
+enum class Kind { None, Field, Battle };
+
+struct Line {
+  Kind kind = Kind::None;
+  int scene = 0;
+  int dialog = 0;
+  int speaker = 0;
+  int tagSpeaker = 0;
+  int prevSpeaker = 0;
+  uintptr_t window = 0;
+};
 
 uintptr_t baseAddress = 0;
-uintptr_t paginationAddress = 0;
-uintptr_t trampolineAddress = 0;
-uintptr_t continuationAddress = 0;
+uintptr_t fieldContinuation = 0;
+uintptr_t battleContinuation = 0;
 
-uint32_t lastPagination = 0;
-bool paginationValid = false;
+CRITICAL_SECTION lineLock;
+HANDLE lineEvent = nullptr;
+Line pendingLine;
+uint32_t pendingSerial = 0;
+
+int speakerRoom = -1;
+int roomPrevSpeaker = 0;
+
+std::wstring modsDir;
 } // namespace State
+
+// =============================================================================
+// Game memory access
+// =============================================================================
+template <typename T> static T ReadHost(uintptr_t address) {
+  return *reinterpret_cast<volatile T *>(address);
+}
+
+template <typename T> static T ReadExe(uintptr_t offset) {
+  return ReadHost<T>(State::baseAddress + offset);
+}
+
+static uintptr_t GuestHost(uint32_t guestAddr) {
+  const uint32_t offset = guestAddr & 0x1FFFFFFF;
+  if (offset >= rde::guest_ram_size)
+    return 0;
+  return State::baseAddress + rde::guest_ram_base + offset;
+}
+
+template <typename T> static T ReadGuest(uint32_t guestAddr) {
+  const uintptr_t host = GuestHost(guestAddr);
+  return host ? ReadHost<T>(host) : T{};
+}
+
+static uint32_t GuestRegister(int index) {
+  return ReadExe<uint32_t>(rde::guest_regs + index * 4);
+}
+
+static std::string Utf8(const std::wstring &text) {
+  const int size = WideCharToMultiByte(
+      CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr, nullptr);
+  std::string out(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), out.data(),
+                      size, nullptr, nullptr);
+  return out;
+}
 
 // =============================================================================
 // Voice Playback (dr_mp3 decode + waveOut) - lightweight, no system codecs
@@ -99,40 +141,31 @@ static void CALLBACK WaveOutCallback(HWAVEOUT hwo, UINT msg, DWORD_PTR,
   QueueUserWorkItem(CleanupWorkItem, ctx, WT_EXECUTEDEFAULT);
 }
 
-static bool DecodeMp3S16(const char *path, drmp3_config &cfg,
-                         drmp3_uint64 &frames, drmp3_int16 *&pcmOut) {
+static drmp3_int16 *DecodeMp3S16(const std::wstring &path, drmp3_config &cfg,
+                                 drmp3_uint64 &frames) {
   frames = 0;
   cfg = {};
-  pcmOut =
-      drmp3_open_file_and_read_pcm_frames_s16(path, &cfg, &frames, nullptr);
-  return pcmOut && frames;
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file)
+    return nullptr;
+  std::vector<char> bytes(static_cast<size_t>(file.tellg()));
+  file.seekg(0);
+  if (bytes.empty() || !file.read(bytes.data(), bytes.size()))
+    return nullptr;
+  drmp3_int16 *pcm = drmp3_open_memory_and_read_pcm_frames_s16(
+      bytes.data(), bytes.size(), &cfg, &frames, nullptr);
+  if (pcm && !frames) {
+    drmp3_free(pcm, nullptr);
+    return nullptr;
+  }
+  return pcm;
 }
 
-bool Init() {
+void Init() {
   if (g_init)
-    return true;
+    return;
   InitializeCriticalSection(&g_cs);
   g_init = true;
-  return true;
-}
-
-void Shutdown() {
-  if (!g_init)
-    return;
-
-  // Stop without holding the lock across waveOutReset (prevents
-  // deadlock/freeze).
-  HWAVEOUT h = nullptr;
-  EnterCriticalSection(&g_cs);
-  h = g_current;
-  g_current = nullptr;
-  LeaveCriticalSection(&g_cs);
-
-  if (h)
-    waveOutReset(h); // callback will queue cleanup
-
-  DeleteCriticalSection(&g_cs);
-  g_init = false;
 }
 
 void Stop() {
@@ -150,19 +183,14 @@ void Stop() {
     waveOutReset(h); // triggers WOM_DONE -> cleanup queued from callback
 }
 
-void PlayFile(const char *filename) {
-  if (!g_init)
-    Init();
+void PlayFile(const std::wstring &path) {
   Stop();
 
   drmp3_config cfg{};
   drmp3_uint64 frames = 0;
-  drmp3_int16 *pcm = nullptr;
-
-  if (!DecodeMp3S16(filename, cfg, frames, pcm)) {
-    if (pcm)
-      drmp3_free(pcm, nullptr);
-    std::cout << "[Voices] File not found: " << filename << "\n";
+  drmp3_int16 *pcm = DecodeMp3S16(path, cfg, frames);
+  if (!pcm) {
+    std::cout << "[Voices] Can't decode: " << Utf8(path) << "\n";
     return;
   }
 
@@ -180,7 +208,7 @@ void PlayFile(const char *filename) {
   MMRESULT r = waveOutOpen(&ctx->hwo, WAVE_MAPPER, &wfx,
                            (DWORD_PTR)WaveOutCallback, 0, CALLBACK_FUNCTION);
   if (r != MMSYSERR_NOERROR) {
-    std::cout << "[Voices] waveOutOpen failed: " << filename << "\n";
+    std::cout << "[Voices] waveOutOpen failed: " << Utf8(path) << "\n";
     FreePlayback(ctx);
     return;
   }
@@ -192,7 +220,7 @@ void PlayFile(const char *filename) {
 
   r = waveOutPrepareHeader(ctx->hwo, &ctx->hdr, sizeof(WAVEHDR));
   if (r != MMSYSERR_NOERROR) {
-    std::cout << "[Voices] waveOutPrepareHeader failed: " << filename << "\n";
+    std::cout << "[Voices] waveOutPrepareHeader failed: " << Utf8(path) << "\n";
     FreePlayback(ctx);
     return;
   }
@@ -209,193 +237,382 @@ void PlayFile(const char *filename) {
       g_current = nullptr;
     LeaveCriticalSection(&g_cs);
 
-    std::cout << "[Voices] waveOutWrite failed: " << filename << "\n";
+    std::cout << "[Voices] waveOutWrite failed: " << Utf8(path) << "\n";
     FreePlayback(ctx);
     return;
   }
 
-  std::cout << "[Voices] Playing: " << filename << "\n";
+  std::cout << "[Voices] Playing: " << Utf8(path) << "\n";
 }
 
 } // namespace Audio
 
-// Character name lookup by avatar ID (index 0-82)
-static const char *const CHARACTER_NAMES[] = {
-    "serge",        "kid",          "guile",       "norris",       "nikki",
-    "viper",        "riddel",       "karsh",       "zoa",          "marcy",
-    "korcha",       "luccia",       "poshul",      "razly",        "zappa",
-    "orcha",        "radius",       "fargo",       "macha",        "glenn",
-    "leena",        "miki",         "harle",       "janice",       "draggy",
-    "starky",       "sprigg",       "mojo",        "turnip",       "neofio",
-    "greco",        "skelly",       "funguy",      "irenes",       "mel",
-    "leah",         "van",          "sneff",       "steena",       "doc",
-    "grobyc",       "pierre",       "orlha",       "pip",          "pip",
-    "pip",          "pip",          "pip",         "pip",          "lynx",
-    "glenn",        "lynx",         "kid child",   "balthasar",    "dwarf",
-    "dario",        "dark-serge",   "dark-serge",  "green-dragon", "sky-dragon",
-    "black-dragon", "water-dragon", "fire-dragon", "earth-dragon", "lynx",
-    "dragon god",   "dario",        "glenn",       "karsh",        "wazuki",
-    "miguel",       "garai",        "marge",       "tia",          "rosetta",
-    "una",          "lisa",         "sage",        "direa",        "zippa",
-    "gogh",         "gogh",         "orcha",
+// =============================================================================
+// Field file names
+// =============================================================================
+
+// Character name by speaker id (0-82); existing voice packs use these names.
+static const wchar_t *const CHARACTER_NAMES[] = {
+    L"serge",        L"kid",          L"guile",        L"norris",
+    L"nikki",        L"viper",        L"riddel",       L"karsh",
+    L"zoa",          L"marcy",        L"korcha",       L"luccia",
+    L"poshul",       L"razly",        L"zappa",        L"orcha",
+    L"radius",       L"fargo",        L"macha",        L"glenn",
+    L"leena",        L"miki",         L"harle",        L"janice",
+    L"draggy",       L"starky",       L"sprigg",       L"mojo",
+    L"turnip",       L"neofio",       L"greco",        L"skelly",
+    L"funguy",       L"irenes",       L"mel",          L"leah",
+    L"van",          L"sneff",        L"steena",       L"doc",
+    L"grobyc",       L"pierre",       L"orlha",        L"pip",
+    L"pip",          L"pip",          L"pip",          L"pip",
+    L"pip",          L"lynx",         L"glenn",        L"lynx",
+    L"kid child",    L"balthasar",    L"dwarf",        L"dario",
+    L"dark-serge",   L"dark-serge",   L"green-dragon", L"sky-dragon",
+    L"black-dragon", L"water-dragon", L"fire-dragon",  L"earth-dragon",
+    L"lynx",         L"dragon god",   L"dario",        L"glenn",
+    L"karsh",        L"wazuki",       L"miguel",       L"garai",
+    L"marge",        L"tia",          L"rosetta",      L"una",
+    L"lisa",         L"sage",         L"direa",        L"zippa",
+    L"gogh",         L"gogh",         L"orcha",
 };
-static constexpr size_t NUM_CHARACTER_NAMES =
-    sizeof(CHARACTER_NAMES) / sizeof(CHARACTER_NAMES[0]);
+static constexpr int NUM_CHARACTER_NAMES =
+    int(sizeof(CHARACTER_NAMES) / sizeof(CHARACTER_NAMES[0]));
 
-static std::string GetCharacterName(uint32_t characterIdRegister) {
-  if (characterIdRegister == 0)
-    return "npc";
+// Speaker id of each {NAME%} tag a message can start with.
+static const char *const NAME_TAGS[] = {
+    "SERGE",  "KID",    "GUILE",  "NORRIS", "NIKKI",  "VIPER",  "RIDDEL",
+    "KARSH",  "ZOAH",   "MARCY",  "KORCHA", "LUCCIA", "POSHUL", "RAZZLY",
+    "ZAPPA",  "ORCHA",  "RADIUS", "FARGO",  "MACHA",  "GLENN",  "LEENA",
+    "MIKI",   "HARLEY", "JANICE", "DRAGGY", "STARKY", "SPRIGG", "MOJO",
+    "TURNIP", "NEOFIO", "GRECO",  "SKELLY", "FUNGUY", "IRENES", "MEL",
+    "LEEA",   "VAN",    "SNEFF",  "STEENA", "DOC",    "GROBYC", "PIERRE",
+    "ORLHA",  "PIP",    nullptr,  nullptr,  nullptr,  nullptr,  nullptr,
+    "LYNX",
+};
+static constexpr int NUM_NAME_TAGS =
+    int(sizeof(NAME_TAGS) / sizeof(NAME_TAGS[0]));
+static constexpr int SPEAKER_KORCHA = 10;
+static constexpr int SPEAKER_MACHA = 18;
+static constexpr wchar_t KANJI_MOTHER = 0x6BCD;
 
-  if (!State::baseAddress)
-    return std::to_string(characterIdRegister);
-
-  uintptr_t avatarAddr = State::baseAddress + Offsets::AVATAR_ID;
-  uint32_t avatarId = *reinterpret_cast<volatile uint32_t *>(avatarAddr);
-
-  if (avatarId >= NUM_CHARACTER_NAMES)
-    return std::to_string(avatarId);
-
-  return CHARACTER_NAMES[avatarId];
+static int NameTagSpeaker(const wchar_t *name, size_t length) {
+  for (int id = 0; id < NUM_NAME_TAGS; ++id) {
+    const char *tag = NAME_TAGS[id];
+    if (!tag || std::strlen(tag) != length)
+      continue;
+    if (std::equal(name, name + length, tag,
+                   [](wchar_t a, char b) { return a == wchar_t(b); }))
+      return id;
+  }
+  return -1;
 }
 
-static std::string BuildVoiceFilename(uint32_t sceneId, uint32_t dialogIndex,
-                                      uint32_t pagination,
-                                      uint32_t characterIdRegister) {
-  std::string charName = GetCharacterName(characterIdRegister);
-  return "mods\\voices\\" + std::to_string(sceneId) + "\\" +
-         std::to_string(dialogIndex) + "-" + std::to_string(pagination) + "-" +
-         charName + ".mp3";
-}
-
-// =============================================================================
-// Dialog Event Handlers
-// =============================================================================
-static void OnDialogDisplayed() {
-  uint32_t page = 0;
-  if (State::paginationAddress)
-    page = *reinterpret_cast<volatile uint32_t *>(State::paginationAddress);
-
-  Audio::Stop();
-  Audio::PlayFile(BuildVoiceFilename(State::current.sceneId,
-                                     State::current.dialogIndex, page,
-                                     State::current.characterId)
-                      .c_str());
-
-  State::last = State::current;
-  State::lastPagination = page;
-  State::paginationValid = true;
-}
-
-static DWORD WINAPI PaginationMonitorThread(LPVOID) {
+// The character named by the first {NAME%} tag (other than Serge's) in the
+// run of tags a message starts with, or 0.
+static int LeadingTagSpeaker(const wchar_t *text) {
+  const wchar_t *at = text;
   for (;;) {
-    Sleep(120);
-    if (!State::paginationAddress || !State::paginationValid)
-      continue;
-
-    const uint32_t page =
-        *reinterpret_cast<volatile uint32_t *>(State::paginationAddress);
-
-    // New dialog index coming through? let the epilogue hook handle it.
-    if (State::current.dialogIndex != State::last.dialogIndex) {
-      State::lastPagination = page;
-      continue;
+    while (*at == L' ' || *at == L'\t')
+      ++at;
+    if (*at != L'{')
+      return 0;
+    const wchar_t *close = std::wcschr(at, L'}');
+    if (!close)
+      return 0;
+    const wchar_t *pct = std::wmemchr(at + 1, L'%', close - at - 1);
+    if (pct) {
+      const int id = NameTagSpeaker(at + 1, pct - at - 1);
+      if (id > 0) {
+        // JP: Korcha's tag followed by "mother" names his mother.
+        if (id == SPEAKER_KORCHA && close[1] == KANJI_MOTHER)
+          return SPEAKER_MACHA;
+        return id;
+      }
     }
+    at = close + 1;
+  }
+}
 
-    if (page == State::lastPagination)
-      continue;
-    State::lastPagination = page;
+static int MessageTagSpeaker(int room, int dialog) {
+  if (ReadExe<int32_t>(rde::msg_room_loaded) != (room & 0x7FF))
+    return 0;
+  const int index = dialog & 0x1FF;
+  auto *variant = ReadExe<const wchar_t *>(
+      rde::msg_room_ex_rows +
+      (index * rde::msg_room_ex_variants + 1) * sizeof(void *));
+  auto *base =
+      ReadExe<const wchar_t *>(rde::msg_room_rows + index * sizeof(void *));
+  const wchar_t *text = variant ? variant : base;
+  return text ? LeadingTagSpeaker(text) : 0;
+}
 
-    if (page == 0) {
-      Audio::Stop();
-      continue;
+static void AddName(std::vector<std::wstring> &names, std::wstring name) {
+  if (std::find(names.begin(), names.end(), name) == names.end())
+    names.push_back(std::move(name));
+}
+
+static void AddCharacter(std::vector<std::wstring> &names, int id) {
+  if (id > 0 && id < NUM_CHARACTER_NAMES)
+    AddName(names, CHARACTER_NAMES[id]);
+}
+
+static std::vector<std::wstring> FieldNames(const State::Line &line) {
+  std::vector<std::wstring> names;
+  if (line.speaker <= 0)
+    AddName(names, L"npc");
+  else if (line.speaker < NUM_CHARACTER_NAMES)
+    AddName(names, CHARACTER_NAMES[line.speaker]);
+  else
+    AddName(names, std::to_wstring(line.speaker));
+  if (line.speaker <= 0)
+    AddName(names, L"serge");
+  AddCharacter(names, line.tagSpeaker);
+  if (line.speaker <= 0)
+    AddCharacter(names, line.prevSpeaker);
+  return names;
+}
+
+// fin_19 reads its text as 1501 (the ending id) and is also listed as 501.
+static std::vector<int> FieldScenes(int room) {
+  if (room == 501 || room == 1501)
+    return {1501, 501};
+  return {room};
+}
+
+static std::vector<std::wstring> CandidateFiles(const State::Line &line,
+                                                int page) {
+  std::vector<std::wstring> rels;
+  const std::wstring dialogPage =
+      std::to_wstring(line.dialog) + L"-" + std::to_wstring(page);
+  if (line.kind == State::Kind::Battle) {
+    rels.push_back(L"battle\\" + std::to_wstring(line.scene) + L"\\" +
+                   dialogPage + L".mp3");
+    return rels;
+  }
+  const std::vector<std::wstring> names = FieldNames(line);
+  for (int scene : FieldScenes(line.scene))
+    for (const std::wstring &name : names)
+      rels.push_back(std::to_wstring(scene) + L"\\" + dialogPage + L"-" + name +
+                     L".mp3");
+  return rels;
+}
+
+// =============================================================================
+// Voice folders: every folder in mods\ in name order (case-insensitive); a
+// folder called "voices" is itself the voice root, any other one holds its
+// lines in <folder>\voices.
+// =============================================================================
+static std::vector<std::wstring> VoiceRoots() {
+  std::vector<std::wstring> folders;
+  WIN32_FIND_DATAW found;
+  HANDLE find = FindFirstFileW((State::modsDir + L"*").c_str(), &found);
+  if (find != INVALID_HANDLE_VALUE) {
+    do {
+      if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+          !std::wcscmp(found.cFileName, L".") ||
+          !std::wcscmp(found.cFileName, L".."))
+        continue;
+      folders.push_back(found.cFileName);
+    } while (FindNextFileW(find, &found));
+    FindClose(find);
+  }
+  std::sort(folders.begin(), folders.end(),
+            [](const std::wstring &a, const std::wstring &b) {
+              return _wcsicmp(a.c_str(), b.c_str()) < 0;
+            });
+
+  std::vector<std::wstring> roots;
+  for (const std::wstring &folder : folders) {
+    if (!_wcsicmp(folder.c_str(), L"voices"))
+      roots.push_back(State::modsDir + folder + L"\\");
+    else
+      roots.push_back(State::modsDir + folder + L"\\voices\\");
+  }
+  return roots;
+}
+
+static std::wstring FindVoiceFile(const std::vector<std::wstring> &rels) {
+  const std::vector<std::wstring> roots = VoiceRoots();
+  for (const std::wstring &rel : rels)
+    for (const std::wstring &root : roots) {
+      const std::wstring path = root + rel;
+      const DWORD attributes = GetFileAttributesW(path.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES &&
+          !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return path;
     }
+  return {};
+}
 
+static void PlayPage(const State::Line &line, int page) {
+  static std::set<std::wstring> loggedMissing;
+  const std::vector<std::wstring> rels = CandidateFiles(line, page);
+  const std::wstring path = FindVoiceFile(rels);
+  if (path.empty()) {
     Audio::Stop();
-    Audio::PlayFile(BuildVoiceFilename(State::last.sceneId,
-                                       State::last.dialogIndex, page,
-                                       State::last.characterId)
-                        .c_str());
+    if (loggedMissing.insert(rels.front()).second)
+      std::cout << "[Voices] Not found: voices\\" << Utf8(rels.front()) << "\n";
+    return;
+  }
+  Audio::PlayFile(path);
+}
+
+// =============================================================================
+// Worker: follows the window of the newest line, plays each page when it is
+// shown and stops when the window closes.
+// =============================================================================
+static DWORD WINAPI VoiceWorkerThread(LPVOID) {
+  State::Line line;
+  uint32_t serial = 0;
+  int page = -1;
+  bool battleWindowOpen = false;
+
+  for (;;) {
+    WaitForSingleObject(State::lineEvent, 50);
+
+    EnterCriticalSection(&State::lineLock);
+    if (State::pendingSerial != serial) {
+      serial = State::pendingSerial;
+      line = State::pendingLine;
+      page = -1;
+      battleWindowOpen = false;
+    }
+    LeaveCriticalSection(&State::lineLock);
+
+    if (line.kind == State::Kind::None)
+      continue;
+
+    bool closed = false;
+    int shown = 0;
+    if (line.kind == State::Kind::Field) {
+      closed = !ReadHost<uint8_t>(line.window + rde::msg_window_in_use);
+      shown = ReadHost<int32_t>(line.window + rde::msg_window_page);
+    } else {
+      const uint8_t state =
+          ReadGuest<uint8_t>(rde::btl_window_state + rde::btl_event_window);
+      if (state == rde::btl_window_state_open)
+        battleWindowOpen = true;
+      closed = ReadGuest<uint32_t>(rde::mode_overlay_id) != rde::mode_overlay_battle ||
+               (battleWindowOpen && state != rde::btl_window_state_open);
+      if (battleWindowOpen)
+        shown = ReadGuest<uint16_t>(rde::btl_window1_page);
+    }
+
+    if (closed) {
+      Audio::Stop();
+      line.kind = State::Kind::None;
+      continue;
+    }
+    if (shown != page) {
+      page = shown;
+      PlayPage(line, page);
+    }
   }
   return 0;
+}
+
+static void PostLine(const State::Line &line) {
+  EnterCriticalSection(&State::lineLock);
+  State::pendingLine = line;
+  ++State::pendingSerial;
+  LeaveCriticalSection(&State::lineLock);
+  SetEvent(State::lineEvent);
+}
+
+// =============================================================================
+// Game-thread events
+// =============================================================================
+
+// A field message window opened and its text was looked up.
+static void __cdecl OnFieldLineOpened(uintptr_t window) {
+  State::Line line;
+  line.kind = State::Kind::Field;
+  line.window = window;
+  line.scene = ReadHost<int32_t>(window + rde::msg_window_room);
+  line.dialog = ReadHost<int32_t>(window + rde::msg_window_message);
+  line.speaker = (std::max)(ReadExe<int32_t>(rde::name_speaker_column), 0);
+  line.tagSpeaker = MessageTagSpeaker(line.scene, line.dialog);
+
+  if (line.scene != State::speakerRoom) {
+    State::speakerRoom = line.scene;
+    State::roomPrevSpeaker = 0;
+  }
+  line.prevSpeaker = State::roomPrevSpeaker;
+  if (line.speaker > 0)
+    State::roomPrevSpeaker = line.speaker;
+
+  PostLine(line);
+}
+
+// A battle script E0 op is opening the event message window.
+static void __cdecl OnBattleLineOpened() {
+  if (ReadGuest<uint32_t>(rde::mode_overlay_id) != rde::mode_overlay_battle)
+    return;
+  const uint32_t script = GuestRegister(rde::guest_reg_s3);
+  State::Line line;
+  line.kind = State::Kind::Battle;
+  line.scene = ReadGuest<uint16_t>(rde::btl_battle_id);
+  line.dialog =
+      ReadGuest<uint8_t>(script + 1) | (ReadGuest<uint8_t>(script + 2) << 8);
+  PostLine(line);
 }
 
 // =============================================================================
 // Assembly Hook Functions
 // =============================================================================
-extern "C" __declspec(naked) void VoicesPrologueHook() {
-  __asm {
-        mov dword ptr [State::current.sceneId], edx
-        mov dword ptr [State::current.characterId], esi
-        mov dword ptr [State::current.dialogIndex], edi
-        jmp dword ptr [State::trampolineAddress]
-  }
-}
-
-extern "C" __declspec(naked) void VoicesEpilogueHook() {
+extern "C" __declspec(naked) void VoicesFieldHook() {
   __asm {
         pushad
         pushfd
-        call OnDialogDisplayed
+        push esi
+        call OnFieldLineOpened
+        add esp, 4
         popfd
         popad
-        jmp dword ptr [State::continuationAddress]
+        jmp dword ptr [State::fieldContinuation]
+  }
+}
+
+extern "C" __declspec(naked) void VoicesBattleHook() {
+  __asm {
+        pushad
+        pushfd
+        call OnBattleLineOpened
+        popfd
+        popad
+        jmp dword ptr [State::battleContinuation]
   }
 }
 
 // =============================================================================
-// Trampoline Construction Helpers
+// Hook installation
 // =============================================================================
 static inline void WriteRel32(uint8_t *at, uintptr_t dst, uintptr_t nextIp) {
   const int32_t rel = (int32_t)(dst - nextIp);
   std::memcpy(at, &rel, sizeof(rel));
 }
 
-bool BuildTrampoline(uintptr_t base) {
-  constexpr int TRAMPOLINE_SIZE = Offsets::PROLOGUE_SIZE + 5; // + JMP
-  void *tramp = VirtualAlloc(nullptr, TRAMPOLINE_SIZE, MEM_COMMIT | MEM_RESERVE,
-                             PAGE_EXECUTE_READWRITE);
-  if (!tramp) {
-    std::cerr << "[Voices] Failed to allocate trampoline\n";
-    return false;
-  }
-
-  State::trampolineAddress = (uintptr_t)tramp;
-  auto *t = (uint8_t *)tramp;
-
-  std::memcpy(t, (const void *)(base + Offsets::HOOK_PROLOGUE),
-              Offsets::PROLOGUE_SIZE);
-
-  // Fix rel32 CALLs inside copied prologue (offsets are specific to this hook
-  // site)
-  WriteRel32(t + 12, base + Offsets::CALL1_TARGET,
-             State::trampolineAddress + 16);
-  WriteRel32(t + 22, base + Offsets::CALL2_TARGET,
-             State::trampolineAddress + 26);
-
-  // Jump to epilogue hook
-  t[30] = 0xE9;
-  WriteRel32(t + 31, (uintptr_t)VoicesEpilogueHook,
-             State::trampolineAddress + 35);
-  return true;
+// Copies the instructions the hook overwrites (position-independent at both
+// sites) and jumps back after them.
+static uintptr_t BuildContinuation(uintptr_t site, int size) {
+  void *cont = VirtualAlloc(nullptr, size + 5, MEM_COMMIT | MEM_RESERVE,
+                            PAGE_EXECUTE_READWRITE);
+  if (!cont)
+    return 0;
+  auto *c = (uint8_t *)cont;
+  std::memcpy(c, (const void *)site, size);
+  c[size] = 0xE9;
+  WriteRel32(c + size + 1, site + size, (uintptr_t)cont + size + 5);
+  return (uintptr_t)cont;
 }
 
-bool BuildContinuation(uintptr_t base) {
-  constexpr int CONT_SIZE = 6 + 5; // original + JMP
-  void *cont = VirtualAlloc(nullptr, CONT_SIZE, MEM_COMMIT | MEM_RESERVE,
-                            PAGE_EXECUTE_READWRITE);
-  if (!cont) {
-    std::cerr << "[Voices] Failed to allocate continuation\n";
+static bool InstallHook(uintptr_t site, int size, void *hook,
+                        uintptr_t &continuation, const char *name) {
+  continuation = BuildContinuation(site, size);
+  if (!continuation || !InstallJmpHook(site, hook, size)) {
+    std::cerr << "[Voices] Failed to install " << name << " hook\n";
     return false;
   }
-
-  State::continuationAddress = (uintptr_t)cont;
-  auto *c = (uint8_t *)cont;
-
-  std::memcpy(c, (const void *)(base + Offsets::HOOK_EPILOGUE), 6);
-
-  c[6] = 0xE9;
-  WriteRel32(c + 7, base + Offsets::AFTER_EPILOGUE,
-             State::continuationAddress + 11);
   return true;
 }
 
@@ -404,32 +621,29 @@ bool BuildContinuation(uintptr_t base) {
 // =============================================================================
 bool ApplyVoicesPatch(uintptr_t base) {
   State::baseAddress = base;
-  State::paginationAddress = base + Offsets::PAGINATION;
-  State::paginationValid = false;
 
+  wchar_t exePath[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+  std::wstring exeDir(exePath, length);
+  exeDir.resize(exeDir.find_last_of(L"\\/") + 1);
+  State::modsDir = exeDir + L"mods\\";
+
+  InitializeCriticalSection(&State::lineLock);
+  State::lineEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   Audio::Init();
 
-  if (!BuildTrampoline(base)) {
-    Audio::Shutdown();
+  const bool field =
+      InstallHook(base + rde::msg_window_open_text_ready,
+                  rde::msg_window_open_text_ready_size, (void *)VoicesFieldHook,
+                  State::fieldContinuation, "field");
+  const bool battle = InstallHook(
+      base + rde::hook_font_text_render_800d191c_obs,
+      rde::hook_font_text_render_800d191c_obs_prologue,
+      (void *)VoicesBattleHook, State::battleContinuation, "battle");
+  if (!field && !battle)
     return false;
-  }
 
-  if (!BuildContinuation(base)) {
-    VirtualFree((void *)State::trampolineAddress, 0, MEM_RELEASE);
-    Audio::Shutdown();
-    return false;
-  }
-
-  if (!InstallJmpHook(base + Offsets::HOOK_PROLOGUE, (void *)VoicesPrologueHook,
-                      5)) {
-    VirtualFree((void *)State::continuationAddress, 0, MEM_RELEASE);
-    VirtualFree((void *)State::trampolineAddress, 0, MEM_RELEASE);
-    Audio::Shutdown();
-    std::cerr << "[Voices] Failed to install prologue hook\n";
-    return false;
-  }
-
-  CreateThread(nullptr, 0, PaginationMonitorThread, nullptr, 0, nullptr);
+  CreateThread(nullptr, 0, VoiceWorkerThread, nullptr, 0, nullptr);
 
   std::cout << "[Mod] Voice Support Enabled\n";
   return true;

@@ -2,8 +2,8 @@
 #include "../utils/memory.h"
 #include <Windows.h>
 
-// Apply the double FPS patch to the game
-bool ApplyDoubleFpsPatch(uintptr_t base);
-
-// NOP the slow-motion icon draw (movss at +0x1ADFBF). Enable via hide_slow_icon.
-bool ApplyHideSlowIconPatch(uintptr_t base);
+// 60 FPS mode: the field draws a frame every vblank at normal speed while it
+// runs at its normal pace (guest hooks on the field frame driver).
+// With stats on, every 300 field frames the console shows how many vblanks
+// each frame took.
+bool Apply60FpsPatch(uintptr_t base, bool stats);
