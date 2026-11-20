@@ -288,6 +288,29 @@ constexpr uint32_t fld_frame_driver_plus_1020_word = 0x86050302;
 // the next instruction, with the period in a1
 constexpr uint32_t fld_frame_driver_plus_1024 = fld_frame_driver + 0x1024;
 
+// fps: script op CA, face the following walk's goal (guest, field overlay).
+// Its first run sets the facing target and the turn request bit and yields
+// with the pc unchanged; a later run advances only while the bit is still set.
+// fld_step_anim_request_turn takes the request up (clears the bit) once per
+// frame, after the frame's logic ticks.
+constexpr uint32_t fld_op_face_target_then_advance = 0x800D0930;
+// lw v1, 4(v0): the running entity
+constexpr uint32_t fld_op_face_target_then_advance_plus_10c =
+    fld_op_face_target_then_advance + 0x10C;
+constexpr uint32_t fld_op_face_target_then_advance_plus_10c_word = 0x8C430004;
+// ori v0, v0, 0x6000: the first run sets the request bits, entity in v1
+constexpr uint32_t fld_op_face_target_then_advance_plus_11c =
+    fld_op_face_target_then_advance + 0x11C;
+constexpr uint32_t fld_op_face_target_then_advance_plus_11c_word = 0x34426000;
+constexpr int guest_reg_v1 = 3;
+// field entity record (0x278 bytes)
+constexpr uint32_t fld_actor_size = 0x278;
+// u32 script pc, an offset into the room's script image
+constexpr uint32_t fld_actor_script_pc = 0x228;
+// u32 state bits; bit 14 is the turn request
+constexpr uint32_t fld_actor_state = 0x270;
+constexpr uint32_t fld_actor_state_turn_request = 0x4000;
+
 // fps stats: battle frame (guest, battle overlay)
 // battle per-frame cycle; its first word is addiu sp, sp, -0x20
 constexpr uint32_t btl_frame_cycle = 0x800BDEA0;
