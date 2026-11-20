@@ -324,18 +324,63 @@ constexpr uintptr_t msg_window_page = 0x18;
 constexpr uintptr_t msg_window_in_use = 0x4DCD4;
 
 constexpr uintptr_t msg_window_open = Rva(0x00439690);
+// mov ecx,[0x01C299A0]: first instruction after msg_text_open built the text
 constexpr uintptr_t msg_window_open_text_ready = msg_window_open + 0x12C;
 constexpr int msg_window_open_text_ready_size = 6;
 
+// speaker of the line's generated words: the script's speaker, 0 becoming
+// lynx_body while name_lynx_in_party is set (Pip as his current form, -1 for
+// two lines RDE keeps without one)
 constexpr uintptr_t name_speaker_column = Rva(0x006E3CF8);
+// byte: a party member wears model 0x31
+constexpr uintptr_t name_lynx_in_party = Rva(0x0075DD52);
+constexpr int lynx_body = 0x31;
 constexpr uintptr_t msg_room_loaded = Rva(0x006E3CF0);
 constexpr uintptr_t msg_room_rows = Rva(0x01C78418);
 constexpr uintptr_t msg_room_ex_rows = Rva(0x01C78C18);
 constexpr int msg_room_ex_variants = 50;
 
 // voices: battle message window
+// RDE's observer of the guest jal btl_msg_setup in btl_op_e0_msg_window_open;
+// push ebp; mov ebp,esp; push -1
 constexpr uintptr_t hook_font_text_render_800d191c_obs = Rva(0x0041C3A0);
 constexpr int hook_font_text_render_800d191c_obs_prologue = 5;
+
+// battle script op E0 (guest, battle overlay), a0 = the running entity,
+// a1 = the instruction; its first word is addiu sp, sp, -0x40
+constexpr uint32_t btl_op_e0_msg_window_open = 0x800D1890;
+constexpr uint32_t btl_op_e0_msg_window_open_word = 0x27BDFFC0;
+// jal btl_msg_setup: the window opens (a0 has been overwritten by then)
+constexpr uint32_t btl_op_e0_msg_window_open_plus_8c =
+    btl_op_e0_msg_window_open + 0x8C;
+constexpr uint32_t btl_op_e0_msg_window_open_plus_8c_word = 0x0C02FEF3;
+constexpr int guest_reg_a0 = 4;
+// pointer to the battle script state; its first words point at the entity
+// records, indexed by entity
+constexpr uint32_t btl_script_state_ptr = 0x800E2FC8;
+// proposed: byte of an entity record, the unit slot the entity is bound to
+// (9 for an entity of the scene itself)
+constexpr uint32_t btl_entity_unit = 0x83;
+// unit slots: 3 PCs, then 6 enemies
+constexpr int btl_unit_slots = 9;
+
+// proposed: per unit slot (16) RDE's label record of the unit, filled by
+// hook_font_text_render_800c3b10_obs: slot, is enemy, character or monster
+// id, enemy letter, present
+constexpr uintptr_t name_battle_unit_labels = Rva(0x01C6DCB8);
+constexpr int name_battle_unit_label_size = 5;
+constexpr uintptr_t hook_font_text_render_800c3b10_obs = Rva(0x0041BD10);
+// mov [ecx+ecx*4+name_battle_unit_labels],cl: absolute operand
+constexpr uintptr_t hook_font_text_render_800c3b10_obs_plus_1e =
+    hook_font_text_render_800c3b10_obs + 0x1E;
+// std::string *__thiscall (const label record *, std::string *out, bool
+// no_letter): display name of a battle unit in the current language (scene
+// 0x186 and 0x1DD names, Lynx's body, the monster or character name), the
+// enemy letter appended unless no_letter
+constexpr uintptr_t name_battle_unit_label = Rva(0x00418910);
+// proposed: C run-time operator delete(void *, size_t), the deallocation of
+// the game's std::string buffers
+constexpr uintptr_t crt_operator_delete = Rva(0x005E9513);
 
 constexpr uint32_t btl_battle_id = 0x80075906;
 constexpr uint32_t btl_window1 = 0x800E00C4;
@@ -444,5 +489,27 @@ constexpr uintptr_t gpu_batch_flush = Rva(0x005CB5E0);
 // mov eax,[esp+14h]; cvttss2si edi,xmm2: the box's maximum x / y (xmm4 /
 // xmm1) are truncated just after
 constexpr uintptr_t gpu_batch_flush_plus_176 = gpu_batch_flush + 0x176;
+
+// resolution scale: GPU backend
+// VRAM move on the GPU copies, through rectangle-sized temporaries; the
+// function ends where gpu_d3d_fill_rect starts
+constexpr uintptr_t hd_vram_move_gpu = Rva(0x005C7C30);
+constexpr uintptr_t hd_vram_move_gpu_end = Rva(0x005C81D0);
+// call dword ptr [eax|ecx + 0xB8]: the six CopySubresourceRegion calls
+constexpr uintptr_t hd_vram_move_gpu_plus_1ec = hd_vram_move_gpu + 0x1EC;
+constexpr uintptr_t hd_vram_move_gpu_plus_23f = hd_vram_move_gpu + 0x23F;
+constexpr uintptr_t hd_vram_move_gpu_plus_3fb = hd_vram_move_gpu + 0x3FB;
+constexpr uintptr_t hd_vram_move_gpu_plus_44d = hd_vram_move_gpu + 0x44D;
+constexpr uintptr_t hd_vram_move_gpu_plus_4fb = hd_vram_move_gpu + 0x4FB;
+constexpr uintptr_t hd_vram_move_gpu_plus_55c = hd_vram_move_gpu + 0x55C;
+// proposed: puts back the shaders, render target and viewports saved before a
+// VRAM upload, move or fill
+constexpr uintptr_t gpu_state_restore = Rva(0x005C9270);
+// call dword ptr [ecx + 0xB0]: RSSetViewports of the saved viewports
+constexpr uintptr_t gpu_state_restore_plus_4b = gpu_state_restore + 0x4B;
+// DXBC of the pixel shader that draws uint16 mirror texels into the RGBA
+// VRAM target for CPU uploads
+constexpr uintptr_t shader_vram_decode_ps = Rva(0x006CAFD8);
+constexpr size_t shader_vram_decode_ps_size = 0x348;
 
 } // namespace rde

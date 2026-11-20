@@ -10,6 +10,12 @@
 Settings::Settings() : m_wasFirstRun(false) {}
 
 std::string Settings::GetSettingsPath() {
+  char overridePath[MAX_PATH];
+  const DWORD overrideLength =
+      GetEnvironmentVariableA("CROSSFIX_SETTINGS", overridePath, MAX_PATH);
+  if (overrideLength > 0 && overrideLength < MAX_PATH)
+    return overridePath;
+
   char exePath[MAX_PATH];
   if (GetModuleFileNameA(NULL, exePath, MAX_PATH) != 0) {
     std::string exePathStr(exePath);
@@ -252,8 +258,8 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# ============================================\n";
   file << "#   Textures / upscaling\n";
   file << "# ============================================\n\n";
-  file << "# Upscale: 1=off, 2=2x, 3=3x, 4=4x (experimental, may crash).\n";
-  file << "upscale_scale=1\n\n";
+  file << "# Resolution scale: 1-16 (4 is RDE's default).\n";
+  file << "resolution_scale=4\n\n";
   file << "# Internal: first-run upscale prompt already shown (do not edit).\n";
   file << "upscale_setup_completed=0\n\n";
   file << "# Dump textures to /dump/ (hash filenames). Disables upscale while "
@@ -284,7 +290,9 @@ bool Settings::SaveDefault(const std::string &filename) {
   file << "# Play voice-pack MP3s for field and battle dialogue "
           "(mods/<pack>/voices/... or mods/voices/...).\n";
   file << "# 0 = off, 1 = on\n";
-  file << "voices_enabled=0\n";
+  file << "voices_enabled=0\n\n";
+  file << "# Volume of the voice lines, 0-100.\n";
+  file << "voice_volume=100\n";
 
   file.close();
   return true;
@@ -297,7 +305,6 @@ bool Settings::HasKey(const std::string &key) const {
 std::vector<std::string> Settings::GetRequiredKeys() {
   return {"widescreen_enabled",
           "disable_pause_on_focus_loss",
-          "upscale_scale",
           "texture_dump_enabled",
           "texture_replace_enabled",
           "upscale_setup_completed",

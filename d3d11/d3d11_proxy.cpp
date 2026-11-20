@@ -145,9 +145,9 @@ static void ApplyHooksWithProtection(ID3D11Device *pDevice,
               << std::dec << "), continuing without them" << std::endl;
   }
 
-  // Apply upscale patch (includes viewport widescreen fix when enabled)
-  // If upscale is enabled, this will overwrite the viewport fix hook but
-  // includes the same logic
+  // Apply the resolution scale. Its viewport hook sits in front of the
+  // widescreen fix hook, applies the same fix before scaling and forwards past
+  // it
   exCode = SafeApplyUpscale4KPatch(pDevice, pContext);
   if (exCode != 0) {
     std::cout << "Warning: Upscale hooks failed (0x" << std::hex << exCode

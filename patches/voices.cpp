@@ -5,6 +5,7 @@
 
 #include <Windows.h>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
@@ -36,12 +37,17 @@ struct Line {
   int speaker = 0;
   int tagSpeaker = 0;
   int prevSpeaker = 0;
+  std::wstring unit;
   uintptr_t window = 0;
 };
 
 uintptr_t baseAddress = 0;
 uintptr_t fieldContinuation = 0;
 uintptr_t battleContinuation = 0;
+
+// Unit slot of the entity whose E0 op ran last, -1 while unknown (also when
+// the guest hook that records it is not installed).
+int battleIssuer = -1;
 
 CRITICAL_SECTION lineLock;
 HANDLE lineEvent = nullptr;
@@ -90,6 +96,15 @@ static std::string Utf8(const std::wstring &text) {
   return out;
 }
 
+static std::wstring Wide(const std::string &text) {
+  const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+                                       (int)text.size(), nullptr, 0);
+  std::wstring out(size, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, text.c_str(), (int)text.size(), out.data(),
+                      size);
+  return out;
+}
+
 // =============================================================================
 // Voice Playback (dr_mp3 decode + waveOut) - lightweight, no system codecs
 // =============================================================================
@@ -104,6 +119,8 @@ struct PlaybackContext {
 static CRITICAL_SECTION g_cs;
 static volatile HWAVEOUT g_current = nullptr;
 static bool g_init = false;
+// voice_volume 0..100: a linear gain on the decoded samples
+static int g_volume = 100;
 
 static void FreePlayback(PlaybackContext *ctx) {
   if (!ctx)
@@ -161,10 +178,11 @@ static drmp3_int16 *DecodeMp3S16(const std::wstring &path, drmp3_config &cfg,
   return pcm;
 }
 
-void Init() {
+void Init(int volume) {
   if (g_init)
     return;
   InitializeCriticalSection(&g_cs);
+  g_volume = volume;
   g_init = true;
 }
 
@@ -193,6 +211,9 @@ void PlayFile(const std::wstring &path) {
     std::cout << "[Voices] Can't decode: " << Utf8(path) << "\n";
     return;
   }
+  if (g_volume < 100)
+    for (drmp3_uint64 i = 0; i < frames * cfg.channels; ++i)
+      pcm[i] = drmp3_int16(pcm[i] * g_volume / 100);
 
   auto *ctx = new PlaybackContext{};
   ctx->pcm = pcm;
@@ -333,17 +354,23 @@ static int LeadingTagSpeaker(const wchar_t *text) {
   }
 }
 
-static int MessageTagSpeaker(int room, int dialog) {
+// The speaker the line's text names: its leading name tag, else the line
+// speaker, else Kid (1); the line speaker itself when the room has no such
+// message. The text is the line's first Ex_ variant when it has one, else
+// its base row.
+static int MessageTagSpeaker(int room, int dialog, int lineSpeaker) {
   if (ReadExe<int32_t>(rde::msg_room_loaded) != (room & 0x7FF))
-    return 0;
+    return lineSpeaker;
   const int index = dialog & 0x1FF;
   auto *variant = ReadExe<const wchar_t *>(
       rde::msg_room_ex_rows +
       (index * rde::msg_room_ex_variants + 1) * sizeof(void *));
   auto *base =
       ReadExe<const wchar_t *>(rde::msg_room_rows + index * sizeof(void *));
-  const wchar_t *text = variant ? variant : base;
-  return text ? LeadingTagSpeaker(text) : 0;
+  if (!base)
+    return lineSpeaker;
+  const int tag = LeadingTagSpeaker(variant && *variant ? variant : base);
+  return tag ? tag : lineSpeaker ? lineSpeaker : 1;
 }
 
 static void AddName(std::vector<std::wstring> &names, std::wstring name) {
@@ -385,8 +412,11 @@ static std::vector<std::wstring> CandidateFiles(const State::Line &line,
   const std::wstring dialogPage =
       std::to_wstring(line.dialog) + L"-" + std::to_wstring(page);
   if (line.kind == State::Kind::Battle) {
-    rels.push_back(L"battle\\" + std::to_wstring(line.scene) + L"\\" +
-                   dialogPage + L".mp3");
+    const std::wstring folder =
+        L"battle\\" + std::to_wstring(line.scene) + L"\\" + dialogPage;
+    if (!line.unit.empty())
+      rels.push_back(folder + L"-" + line.unit + L".mp3");
+    rels.push_back(folder + L".mp3");
     return rels;
   }
   const std::vector<std::wstring> names = FieldNames(line);
@@ -398,9 +428,9 @@ static std::vector<std::wstring> CandidateFiles(const State::Line &line,
 }
 
 // =============================================================================
-// Voice folders: every folder in mods\ in name order (case-insensitive); a
-// folder called "voices" is itself the voice root, any other one holds its
-// lines in <folder>\voices.
+// Voice folders: every folder in mods\ in name order (case-insensitive) holds
+// its lines in <folder>\voices; a folder called "voices" is also itself a
+// voice root, searched after its own voices subfolder.
 // =============================================================================
 static std::vector<std::wstring> VoiceRoots() {
   std::vector<std::wstring> folders;
@@ -423,10 +453,9 @@ static std::vector<std::wstring> VoiceRoots() {
 
   std::vector<std::wstring> roots;
   for (const std::wstring &folder : folders) {
+    roots.push_back(State::modsDir + folder + L"\\voices\\");
     if (!_wcsicmp(folder.c_str(), L"voices"))
       roots.push_back(State::modsDir + folder + L"\\");
-    else
-      roots.push_back(State::modsDir + folder + L"\\voices\\");
   }
   return roots;
 }
@@ -523,15 +552,22 @@ static void PostLine(const State::Line &line) {
 // Game-thread events
 // =============================================================================
 
-// A field message window opened and its text was looked up.
+// A field message window opened and its text was looked up. The speaker is
+// the script's (Serge stays 0 while he wears Lynx's body); the line speaker
+// that picks the text's words is the game's.
 static void __cdecl OnFieldLineOpened(uintptr_t window) {
   State::Line line;
   line.kind = State::Kind::Field;
   line.window = window;
   line.scene = ReadHost<int32_t>(window + rde::msg_window_room);
   line.dialog = ReadHost<int32_t>(window + rde::msg_window_message);
-  line.speaker = (std::max)(ReadExe<int32_t>(rde::name_speaker_column), 0);
-  line.tagSpeaker = MessageTagSpeaker(line.scene, line.dialog);
+  const int lineSpeaker =
+      (std::max)(ReadExe<int32_t>(rde::name_speaker_column), 0);
+  line.speaker = lineSpeaker == rde::lynx_body &&
+                         ReadExe<uint8_t>(rde::name_lynx_in_party)
+                     ? 0
+                     : lineSpeaker;
+  line.tagSpeaker = MessageTagSpeaker(line.scene, line.dialog, lineSpeaker);
 
   if (line.scene != State::speakerRoom) {
     State::speakerRoom = line.scene;
@@ -544,7 +580,77 @@ static void __cdecl OnFieldLineOpened(uintptr_t window) {
   PostLine(line);
 }
 
-// A battle script E0 op is opening the event message window.
+static bool BattleOverlayResident() {
+  return ReadGuest<uint32_t>(rde::mode_overlay_id) ==
+             rde::mode_overlay_battle &&
+         ReadGuest<uint32_t>(rde::btl_op_e0_msg_window_open) ==
+             rde::btl_op_e0_msg_window_open_word &&
+         ReadGuest<uint32_t>(rde::btl_op_e0_msg_window_open_plus_8c) ==
+             rde::btl_op_e0_msg_window_open_plus_8c_word;
+}
+
+// Guest hook: a battle script E0 op starts; it opens the window now or on a
+// later run once the window is free. Records the unit slot of the entity
+// running it.
+static void __cdecl OnBattleMessageOp() {
+  if (!BattleOverlayResident())
+    return;
+  const uint32_t entities = ReadGuest<uint32_t>(rde::btl_script_state_ptr);
+  const uint32_t entity =
+      ReadGuest<uint32_t>(entities + GuestRegister(rde::guest_reg_a0) * 4);
+  State::battleIssuer = ReadGuest<uint8_t>(entity + rde::btl_entity_unit);
+}
+
+// The game's display name of a battle unit, without the enemy letter, as UTF-8.
+static std::string BattleUnitLabel(int unit) {
+  struct GameString {
+    union {
+      char buf[16];
+      char *ptr;
+    };
+    uint32_t size;
+    uint32_t capacity;
+  } text{};
+  using LabelFn = void *(__thiscall *)(const void *, GameString *, char);
+  using DeleteFn = void(__cdecl *)(void *, size_t);
+  const auto label =
+      reinterpret_cast<LabelFn>(State::baseAddress + rde::name_battle_unit_label);
+  label(reinterpret_cast<const void *>(State::baseAddress +
+                                       rde::name_battle_unit_labels +
+                                       unit * rde::name_battle_unit_label_size),
+        &text, 1);
+  const bool onHeap = text.capacity >= sizeof(text.buf);
+  std::string name(onHeap ? text.ptr : text.buf, text.size);
+  if (onHeap) {
+    // A block of 4 KB or more keeps its real start just before the text.
+    size_t bytes = text.capacity + 1;
+    void *block = text.ptr;
+    if (bytes >= 0x1000) {
+      block = reinterpret_cast<void **>(text.ptr)[-1];
+      bytes += 0x23;
+    }
+    reinterpret_cast<DeleteFn>(State::baseAddress + rde::crt_operator_delete)(
+        block, bytes);
+  }
+  return name;
+}
+
+// A unit name as a file-name part: lowercase, spaces, control characters and
+// \ / : * ? " < > | removed.
+static std::wstring VoiceUnitName(const std::string &label) {
+  std::string name;
+  for (char ch : label) {
+    const unsigned char byte = static_cast<unsigned char>(ch);
+    if (byte <= ' ' || std::strchr("\\/:*?\"<>|", ch))
+      continue;
+    name += byte < 0x80 ? char(std::tolower(byte)) : ch;
+  }
+  return Wide(name);
+}
+
+// A battle script E0 op is opening the event message window. The unit is the
+// one bound to the issuing entity; an entity of the scene itself speaks as
+// the first PC.
 static void __cdecl OnBattleLineOpened() {
   if (ReadGuest<uint32_t>(rde::mode_overlay_id) != rde::mode_overlay_battle)
     return;
@@ -554,6 +660,10 @@ static void __cdecl OnBattleLineOpened() {
   line.scene = ReadGuest<uint16_t>(rde::btl_battle_id);
   line.dialog =
       ReadGuest<uint8_t>(script + 1) | (ReadGuest<uint8_t>(script + 2) << 8);
+  if (State::battleIssuer >= 0)
+    line.unit = VoiceUnitName(BattleUnitLabel(
+        State::battleIssuer < rde::btl_unit_slots ? State::battleIssuer : 0));
+  State::battleIssuer = -1;
   PostLine(line);
 }
 
@@ -606,8 +716,10 @@ static uintptr_t BuildContinuation(uintptr_t site, int size) {
   return (uintptr_t)cont;
 }
 
-static bool InstallHook(uintptr_t site, int size, void *hook,
-                        uintptr_t &continuation, const char *name) {
+static bool InstallHook(uintptr_t site, const uint8_t *expected, int size,
+                        void *hook, uintptr_t &continuation, const char *name) {
+  if (!VerifyBytes(site, expected, size, name))
+    return false;
   continuation = BuildContinuation(site, size);
   if (!continuation || !InstallJmpHook(site, hook, size)) {
     std::cerr << "[Voices] Failed to install " << name << " hook\n";
@@ -616,10 +728,42 @@ static bool InstallHook(uintptr_t site, int size, void *hook,
   return true;
 }
 
+// What the battle unit names need: the hook registrar, RDE's unit label
+// function, its label table and the deallocator of the name it returns.
+static bool VerifyUnitNames(uintptr_t base) {
+  const uint8_t registerHookPrologue[] = {0x83, 0xEC, 0x0C, 0x53, 0x8B, 0x5C,
+                                          0x24, 0x14, 0x55, 0x56, 0x57};
+  const uint8_t labelPrologue[] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF,
+                                   0x68, 0xD9, 0x72, 0x68, 0x00};
+  const uint8_t deleteBody[] = {0x55, 0x8B, 0xEC, 0xFF, 0x75, 0x08, 0xE8,
+                                0x52, 0x04, 0xFF, 0xFF, 0x59, 0x5D, 0xC3};
+  return VerifyBytes(base + rde::register_hook, registerHookPrologue,
+                     sizeof(registerHookPrologue), "voices register_hook") &&
+         VerifyBytes(base + rde::name_battle_unit_label, labelPrologue,
+                     sizeof(labelPrologue), "voices unit label") &&
+         VerifyBytes(base + rde::crt_operator_delete, deleteBody,
+                     sizeof(deleteBody), "voices operator delete") &&
+         VerifyOperand(base + rde::hook_font_text_render_800c3b10_obs_plus_1e,
+                       base + rde::name_battle_unit_labels,
+                       "voices unit label table");
+}
+
+// The guest hook is registered once the guest has loaded its first mode
+// overlay, after RDE has installed its own.
+static DWORD WINAPI RegisterGuestHookThread(LPVOID) {
+  while (ReadGuest<uint32_t>(rde::mode_overlay_id) == 0)
+    Sleep(10);
+  using RegisterHookFn = void(__stdcall *)(uint32_t, void (*)());
+  reinterpret_cast<RegisterHookFn>(State::baseAddress + rde::register_hook)(
+      rde::btl_op_e0_msg_window_open, OnBattleMessageOp);
+  std::cout << "[Mod] Voice Support: battle unit names enabled\n";
+  return 0;
+}
+
 // =============================================================================
 // Main Patch Application
 // =============================================================================
-bool ApplyVoicesPatch(uintptr_t base) {
+bool ApplyVoicesPatch(uintptr_t base, int volume) {
   State::baseAddress = base;
 
   wchar_t exePath[MAX_PATH];
@@ -630,19 +774,30 @@ bool ApplyVoicesPatch(uintptr_t base) {
 
   InitializeCriticalSection(&State::lineLock);
   State::lineEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-  Audio::Init();
+  Audio::Init(std::clamp(volume, 0, 100));
 
+  const uint8_t fieldSite[] = {0x8B, 0x0D, 0xA0, 0x99, 0xC2, 0x01};
+  const uint8_t battleSite[] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF};
+  static_assert(sizeof(fieldSite) == rde::msg_window_open_text_ready_size);
+  static_assert(sizeof(battleSite) ==
+                rde::hook_font_text_render_800d191c_obs_prologue);
   const bool field =
-      InstallHook(base + rde::msg_window_open_text_ready,
-                  rde::msg_window_open_text_ready_size, (void *)VoicesFieldHook,
-                  State::fieldContinuation, "field");
-  const bool battle = InstallHook(
-      base + rde::hook_font_text_render_800d191c_obs,
-      rde::hook_font_text_render_800d191c_obs_prologue,
-      (void *)VoicesBattleHook, State::battleContinuation, "battle");
+      InstallHook(base + rde::msg_window_open_text_ready, fieldSite,
+                  sizeof(fieldSite), (void *)VoicesFieldHook,
+                  State::fieldContinuation, "voices field");
+  const bool battle =
+      InstallHook(base + rde::hook_font_text_render_800d191c_obs, battleSite,
+                  sizeof(battleSite), (void *)VoicesBattleHook,
+                  State::battleContinuation, "voices battle");
   if (!field && !battle)
     return false;
 
+  if (battle && VerifyUnitNames(base)) {
+    HANDLE thread = CreateThread(nullptr, 0, RegisterGuestHookThread, nullptr,
+                                 0, nullptr);
+    if (thread)
+      CloseHandle(thread);
+  }
   CreateThread(nullptr, 0, VoiceWorkerThread, nullptr, 0, nullptr);
 
   std::cout << "[Mod] Voice Support Enabled\n";

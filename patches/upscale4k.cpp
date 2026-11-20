@@ -1,19 +1,41 @@
-// Upscale Patch - Based on SpecialK's implementation
+// Resolution scale: draws RDE's VRAM render target at 1x to 16x the PS1
+// resolution instead of the game's fixed 4x.
+//
+// RDE keeps VRAM on the GPU as two 4096x2048 surfaces, 4 texels per PS1 pixel
+// each way: an RGBA8 colour target that polygons draw into (with a full-size
+// copy or MSAA resolve texture beside it) and an R16_UINT mirror holding the
+// raw 16-bit texels that texture pages are decoded from. Only the colour side
+// is resized; the mirror stays at 4x, so texture decoding and the HD texture
+// packs are untouched. Every place where the two meet works in 4x units and
+// is converted here:
+//   - textures: the colour target, its copy / resolve texture and the
+//     temporaries of a VRAM move are created at the scaled size and tagged
+//   - viewports set while a tagged target is bound are scaled; the state
+//     restore that puts back a viewport read from the device passes it as is
+//   - the copies of a VRAM move scale their boxes and destinations on tagged
+//     textures. The D3D11 runtime rewrites the copy slots of its context
+//     vtable after start-up, so RDE's call sites are patched rather than the
+//     vtable
+//   - the pixel shader that draws CPU uploads from the mirror into the colour
+//     target reads the mirror at the scaled pixel's 4x position
 
 #define NOMINMAX
 #include "upscale4k.h"
 #include "../utils/memory.h"
+#include "../utils/rde_symbols.h"
 #include "../utils/settings.h"
 #include "../utils/viewport_utils.h"
 #include "texturereplace.h"
+#include "viewportwidescreenfix.h"
 #include "widescreen.h"
 #include <Windows.h>
+#include <d3dcompiler.h>
+#include <intrin.h>
 #include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <string>
 
-// Upscale state (accessible via getters for cross-module coordination)
 static bool g_upscaleActive = false;
 
 // Signaled once RunFirstTimeSetup() completes (or finds setup already done).
@@ -21,31 +43,76 @@ static bool g_upscaleActive = false;
 static HANDLE g_setupCompleteEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
 namespace {
-constexpr float BaseWidth = 4096.0f;
-constexpr float BaseHeight = 2048.0f;
+constexpr UINT kBaseWidth = 4096;
+constexpr UINT kBaseHeight = 2048;
+constexpr int kGameScale = 4;
+constexpr int kMinScale = 1;
+constexpr int kMaxScale = 16;
 
-static float g_ResMultiplier = 4.0f;
-static float g_NewWidth = BaseWidth * 4.0f;
-static float g_NewHeight = BaseHeight * 4.0f;
+// Scale in multiples of the PS1 resolution (4 = the game's own)
+int g_scale = kGameScale;
+
+// {6E0C2B1A-3D4F-4C8B-9A61-5B7D2E8F0C13}: set on every scaled texture
+const GUID kScaledTextureTag = {0x6e0c2b1a,
+                                0x3d4f,
+                                0x4c8b,
+                                {0x9a, 0x61, 0x5b, 0x7d, 0x2e, 0x8f, 0x0c, 0x13}};
 
 typedef void(STDMETHODCALLTYPE *RSSetViewports_t)(ID3D11DeviceContext *, UINT,
                                                   const D3D11_VIEWPORT *);
-typedef void(STDMETHODCALLTYPE *CopySubresourceRegion_t)(
-    ID3D11DeviceContext *, ID3D11Resource *, UINT, UINT, UINT, UINT,
-    ID3D11Resource *, UINT, const D3D11_BOX *, BOOL);
 typedef HRESULT(STDMETHODCALLTYPE *CreateTexture2D_t)(
     ID3D11Device *, const D3D11_TEXTURE2D_DESC *,
     const D3D11_SUBRESOURCE_DATA *, ID3D11Texture2D **);
+typedef HRESULT(STDMETHODCALLTYPE *CreatePixelShader_t)(
+    ID3D11Device *, const void *, SIZE_T, ID3D11ClassLinkage *,
+    ID3D11PixelShader **);
 
-// Win32 primitives for thread-safe access (avoids C++ runtime initialization
-// issues)
+constexpr int kCreateTexture2DIndex = 5;
+constexpr int kCreatePixelShaderIndex = 15;
+constexpr int kRSSetViewportsIndex = 44;
+
+// call dword ptr [eax|ecx + 0xB8]: CopySubresourceRegion in hd_vram_move_gpu
+const uintptr_t kVramMoveCopySites[] = {
+    rde::hd_vram_move_gpu_plus_1ec, rde::hd_vram_move_gpu_plus_23f,
+    rde::hd_vram_move_gpu_plus_3fb, rde::hd_vram_move_gpu_plus_44d,
+    rde::hd_vram_move_gpu_plus_4fb, rde::hd_vram_move_gpu_plus_55c};
+const uint8_t kCopyCallEax[] = {0xFF, 0x90, 0xB8, 0x00, 0x00, 0x00};
+const uint8_t kCopyCallEcx[] = {0xFF, 0x91, 0xB8, 0x00, 0x00, 0x00};
+// call dword ptr [ecx + 0xB0]: RSSetViewports of the saved viewports
+const uint8_t kRestoreViewportsCall[] = {0xFF, 0x91, 0xB0, 0x00, 0x00, 0x00};
+
 volatile RSSetViewports_t Original_RSSetViewports = nullptr;
-volatile CopySubresourceRegion_t Original_CopySubresourceRegion = nullptr;
 volatile CreateTexture2D_t Original_CreateTexture2D = nullptr;
+volatile CreatePixelShader_t Original_CreatePixelShader = nullptr;
 
 volatile LONG g_viewportsHookReady = 0;
-volatile LONG g_copyHookReady = 0;
 volatile LONG g_createTextureHookReady = 0;
+volatile LONG g_createPixelShaderHookReady = 0;
+
+uintptr_t g_moduleBase = 0;
+
+// Draws mirror texels into the colour target for CPU uploads. The original
+// reads the mirror at the target pixel's own position, which is only right at
+// 4x; this one reads the mirror texel under the scaled pixel's centre.
+// SOURCE_PER_TARGET is 4 / scale.
+const char kUploadShaderSource[] = R"(
+Texture2D<uint> vram : register(t0);
+
+struct PSIn
+{
+  float4 pos : SV_POSITION;
+  float4 col : COLOR;
+  float2 uv : TEXCOORD;
+};
+
+float4 main(PSIn i) : SV_Target
+{
+  uint texel = vram.Load(int3(int2(i.pos.xy * SOURCE_PER_TARGET), 0));
+  uint packed = (texel & 0x7FFF) | (texel != 0 ? 0x8000 : 0);
+  return float4(packed & 31, packed & 992, packed & 0x7C00, packed & 0x8000) *
+         float4(1.0 / 31.0, 1.0 / 992.0, 1.0 / 31744.0, 1.0 / 32768.0);
+}
+)";
 
 inline bool IsColorFormat(DXGI_FORMAT format) {
   return format == DXGI_FORMAT_R8G8B8A8_UNORM ||
@@ -55,13 +122,131 @@ inline bool IsColorFormat(DXGI_FORMAT format) {
          format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
          format == DXGI_FORMAT_R32G32B32A32_FLOAT;
 }
+
+// RDE passes 4x coordinates that are whole multiples of 4, so the scaled
+// value is exact for every scale
+inline UINT ScaleUnits(UINT value) {
+  return static_cast<UINT>(static_cast<uint64_t>(value) * g_scale /
+                           kGameScale);
+}
+
+inline float ScaleUnits(float value) {
+  return value * static_cast<float>(g_scale) / kGameScale;
+}
+
+bool IsScaledResource(ID3D11Resource *resource) {
+  if (!resource)
+    return false;
+  BYTE tag = 0;
+  UINT size = sizeof(tag);
+  return SUCCEEDED(resource->GetPrivateData(kScaledTextureTag, &size, &tag)) &&
+         tag != 0;
+}
+
+void TagScaledTexture(ID3D11Texture2D *texture) {
+  const BYTE tag = 1;
+  texture->SetPrivateData(kScaledTextureTag, sizeof(tag), &tag);
+}
+
+bool IsScaledTargetBound(ID3D11DeviceContext *context) {
+  ID3D11RenderTargetView *rtv = nullptr;
+  context->OMGetRenderTargets(1, &rtv, nullptr);
+  if (!rtv)
+    return false;
+  ID3D11Resource *resource = nullptr;
+  rtv->GetResource(&resource);
+  const bool scaled = IsScaledResource(resource);
+  if (resource)
+    resource->Release();
+  rtv->Release();
+  return scaled;
+}
+
+// RDE allocates the temporaries of a VRAM move (rectangle-sized copies of the
+// colour target and of the mirror) inside hd_vram_move_gpu
+bool CalledFromVramMove(void *returnAddress) {
+  const uintptr_t address = reinterpret_cast<uintptr_t>(returnAddress);
+  return address >= g_moduleBase + rde::hd_vram_move_gpu &&
+         address < g_moduleBase + rde::hd_vram_move_gpu_end;
+}
+
+ID3D11PixelShader *CompileUploadShader(ID3D11Device *device,
+                                       ID3D11ClassLinkage *linkage) {
+  HMODULE compiler = LoadLibraryA("d3dcompiler_47.dll");
+  if (!compiler)
+    return nullptr;
+  auto compile = reinterpret_cast<pD3DCompile>(
+      GetProcAddress(compiler, "D3DCompile"));
+  if (!compile)
+    return nullptr;
+
+  const std::string ratio =
+      std::to_string(static_cast<double>(kGameScale) / g_scale);
+  const D3D_SHADER_MACRO defines[] = {{"SOURCE_PER_TARGET", ratio.c_str()},
+                                      {nullptr, nullptr}};
+  ID3DBlob *code = nullptr;
+  ID3DBlob *errors = nullptr;
+  HRESULT hr = compile(kUploadShaderSource, sizeof(kUploadShaderSource) - 1,
+                       "upload_ps", defines, nullptr, "main", "ps_4_0",
+                       D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+  if (errors) {
+    std::cout << "[Upscale] Upload shader: "
+              << static_cast<const char *>(errors->GetBufferPointer())
+              << std::endl;
+    errors->Release();
+  }
+  if (FAILED(hr) || !code)
+    return nullptr;
+
+  ID3D11PixelShader *shader = nullptr;
+  hr = Original_CreatePixelShader(device, code->GetBufferPointer(),
+                                  code->GetBufferSize(), linkage, &shader);
+  code->Release();
+  return SUCCEEDED(hr) ? shader : nullptr;
+}
+
+// Largest scale up to the requested one whose colour target and copy both fit
+int ProbeScale(ID3D11Device *device, int requested) {
+  for (int scale = requested; scale > kGameScale; --scale) {
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = kBaseWidth * scale / kGameScale;
+    desc.Height = kBaseHeight * scale / kGameScale;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+    ID3D11Texture2D *target = nullptr;
+    ID3D11Texture2D *copy = nullptr;
+    const bool fits = SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &target)) &&
+                      SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &copy));
+    if (target)
+      target->Release();
+    if (copy)
+      copy->Release();
+    if (fits)
+      return scale;
+  }
+  return std::min(requested, kGameScale);
+}
+
+int ReadScale(const Settings &settings) {
+  if (settings.HasKey("resolution_scale"))
+    return settings.GetInt("resolution_scale", kGameScale);
+  const int legacy = settings.GetInt("upscale_scale", 1);
+  return legacy > 1 ? legacy * kGameScale : kGameScale;
+}
 } // namespace
 
 void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext *This,
                                              UINT NumViewports,
                                              const D3D11_VIEWPORT *pViewports) {
   MemoryBarrier();
-  RSSetViewports_t pOriginal = Original_RSSetViewports;
+  RSSetViewports_t pOriginal = GetUnhookedRSSetViewports();
+  if (!pOriginal)
+    pOriginal = Original_RSSetViewports;
 
   if (!pOriginal)
     return;
@@ -70,162 +255,90 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports(ID3D11DeviceContext *This,
     return;
   }
 
-  // Allocate a small buffer on stack for modified viewports
   D3D11_VIEWPORT vps[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
   UINT count = ViewportUtils::CopyViewportsToBuffer(
       vps, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE, pViewports,
       NumViewports);
 
-  // Apply viewport widescreen fix FIRST (before upscaling)
-  // Only apply if we're actually in widescreen mode
-  // Use tolerance to account for floating-point precision
-  // Ratio should be < 1.0 for widescreen (e.g., 0.75 for 16:9)
+  // The widescreen fix matches viewports in the game's 4x units, so it runs
+  // before scaling
   float ratio = GetCurrentWidescreenRatio();
   const float WIDESCREEN_THRESHOLD = 0.99f;
   if (ratio < WIDESCREEN_THRESHOLD) {
     ViewportUtils::ApplyViewportWidescreenFix(vps, count, ratio);
   }
 
-  // Check render target once per call
-  bool isUpscaledTarget = false;
-  ID3D11RenderTargetView *rtv = nullptr;
-  This->OMGetRenderTargets(1, &rtv, nullptr);
-  if (rtv) {
-    ID3D11Resource *pRes = nullptr;
-    rtv->GetResource(&pRes);
-    if (pRes) {
-      ID3D11Texture2D *pTex = nullptr;
-      pRes->QueryInterface(__uuidof(ID3D11Texture2D), (void **)&pTex);
-      if (pTex) {
-        D3D11_TEXTURE2D_DESC texDesc;
-        pTex->GetDesc(&texDesc);
-        if (texDesc.Width == (UINT)g_NewWidth &&
-            texDesc.Height == (UINT)g_NewHeight) {
-          isUpscaledTarget = true;
-        }
-        pTex->Release();
-      }
-      pRes->Release();
-    }
-    rtv->Release();
-  }
-
-  for (UINT i = 0; i < count; ++i) {
-    // Apply 4K Upscale logic if rendering to upscaled target
-    if (isUpscaledTarget) {
-      float left_ndc = 2.0f * (vps[i].TopLeftX / BaseWidth) - 1.0f;
-      float top_ndc = 2.0f * (vps[i].TopLeftY / BaseHeight) - 1.0f;
-
-      vps[i].TopLeftX = (left_ndc * g_NewWidth + g_NewWidth) / 2.0f;
-      vps[i].TopLeftY = (top_ndc * g_NewHeight + g_NewHeight) / 2.0f;
-      vps[i].Width *= g_ResMultiplier;
-      vps[i].Height *= g_ResMultiplier;
-
-      vps[i].TopLeftX = std::min(vps[i].TopLeftX, 32767.0f);
-      vps[i].TopLeftY = std::min(vps[i].TopLeftY, 32767.0f);
-      vps[i].Width = std::min(vps[i].Width, 32767.0f);
-      vps[i].Height = std::min(vps[i].Height, 32767.0f);
+  if (IsScaledTargetBound(This)) {
+    for (UINT i = 0; i < count; ++i) {
+      vps[i].TopLeftX = ScaleUnits(vps[i].TopLeftX);
+      vps[i].TopLeftY = ScaleUnits(vps[i].TopLeftY);
+      vps[i].Width = std::min(ScaleUnits(vps[i].Width), 32767.0f);
+      vps[i].Height = std::min(ScaleUnits(vps[i].Height), 32767.0f);
     }
   }
 
   pOriginal(This, count, vps);
 }
 
-void STDMETHODCALLTYPE Hooked_CopySubresourceRegion(
-    ID3D11DeviceContext *This, ID3D11Resource *pDstResource,
-    UINT DstSubresource, UINT DstX, UINT DstY, UINT DstZ,
-    ID3D11Resource *pSrcResource, UINT SrcSubresource, const D3D11_BOX *pSrcBox,
-    BOOL bWrapped) {
-  MemoryBarrier();
-  CopySubresourceRegion_t pOriginal = Original_CopySubresourceRegion;
-
-  if (!pOriginal)
-    return;
-  if (!g_copyHookReady) {
-    pOriginal(This, pDstResource, DstSubresource, DstX, DstY, DstZ,
-              pSrcResource, SrcSubresource, pSrcBox, bWrapped);
-    return;
+namespace {
+// Called in place of the context's CopySubresourceRegion by the copies of a
+// VRAM move, with the same arguments (4x units)
+void STDMETHODCALLTYPE VramMoveCopy(ID3D11DeviceContext *context,
+                                   ID3D11Resource *dst, UINT dstSubresource,
+                                   UINT dstX, UINT dstY, UINT dstZ,
+                                   ID3D11Resource *src, UINT srcSubresource,
+                                   const D3D11_BOX *srcBox) {
+  D3D11_BOX box;
+  if (srcBox && IsScaledResource(src)) {
+    box = *srcBox;
+    box.left = ScaleUnits(box.left);
+    box.top = ScaleUnits(box.top);
+    box.right = ScaleUnits(box.right);
+    box.bottom = ScaleUnits(box.bottom);
+    srcBox = &box;
   }
-
-  D3D11_BOX newBox = {};
-  const D3D11_BOX *pActualSrcBox = pSrcBox;
-  UINT ActualDstX = DstX;
-  UINT ActualDstY = DstY;
-
-  if (pSrcResource && pDstResource) {
-    ID3D11Texture2D *pSrcTex = nullptr;
-    ID3D11Texture2D *pDstTex = nullptr;
-
-    pSrcResource->QueryInterface(__uuidof(ID3D11Texture2D), (void **)&pSrcTex);
-    pDstResource->QueryInterface(__uuidof(ID3D11Texture2D), (void **)&pDstTex);
-
-    if (pSrcTex && pDstTex) {
-      D3D11_TEXTURE2D_DESC srcDesc = {};
-      D3D11_TEXTURE2D_DESC dstDesc = {};
-      pSrcTex->GetDesc(&srcDesc);
-      pDstTex->GetDesc(&dstDesc);
-
-      if (srcDesc.Width == (UINT)g_NewWidth &&
-          srcDesc.Height == (UINT)g_NewHeight && pSrcBox &&
-          dstDesc.Width == (UINT)g_NewWidth &&
-          dstDesc.Height == (UINT)g_NewHeight) {
-
-        newBox = *pSrcBox;
-
-        float HalfWidth = g_NewWidth / 2.0f;
-        float HalfHeight = g_NewHeight / 2.0f;
-
-        float left_ndc =
-            2.0f *
-                (static_cast<float>(std::clamp((UINT)newBox.left, 0U, 4096U)) /
-                 4096.0f) -
-            1.0f;
-        float top_ndc =
-            2.0f *
-                (static_cast<float>(std::clamp((UINT)newBox.top, 0U, 2048U)) /
-                 2048.0f) -
-            1.0f;
-        float right_ndc =
-            2.0f *
-                (static_cast<float>(std::clamp((UINT)newBox.right, 0U, 4096U)) /
-                 4096.0f) -
-            1.0f;
-        float bottom_ndc = 2.0f * (static_cast<float>(std::clamp(
-                                       (UINT)newBox.bottom, 0U, 2048U)) /
-                                   2048.0f) -
-                           1.0f;
-
-        newBox.left =
-            static_cast<UINT>(std::max(0.0f, left_ndc * HalfWidth + HalfWidth));
-        newBox.top = static_cast<UINT>(
-            std::max(0.0f, top_ndc * HalfHeight + HalfHeight));
-        newBox.right = static_cast<UINT>(
-            std::max(0.0f, right_ndc * HalfWidth + HalfWidth));
-        newBox.bottom = static_cast<UINT>(
-            std::max(0.0f, bottom_ndc * HalfHeight + HalfHeight));
-
-        ActualDstX = DstX * (UINT)g_ResMultiplier;
-        ActualDstY = DstY * (UINT)g_ResMultiplier;
-
-        pActualSrcBox = &newBox;
-      } else if (pSrcBox && (pSrcBox->right > srcDesc.Width ||
-                             pSrcBox->bottom > srcDesc.Height)) {
-        newBox = *pSrcBox;
-        newBox.right = std::min(srcDesc.Width, newBox.right);
-        newBox.bottom = std::min(srcDesc.Height, newBox.bottom);
-        pActualSrcBox = &newBox;
-      }
-    }
-
-    if (pSrcTex)
-      pSrcTex->Release();
-    if (pDstTex)
-      pDstTex->Release();
+  if (IsScaledResource(dst)) {
+    dstX = ScaleUnits(dstX);
+    dstY = ScaleUnits(dstY);
   }
-
-  pOriginal(This, pDstResource, DstSubresource, ActualDstX, ActualDstY, DstZ,
-            pSrcResource, SrcSubresource, pActualSrcBox, bWrapped);
+  context->CopySubresourceRegion(dst, dstSubresource, dstX, dstY, dstZ, src,
+                                 srcSubresource, srcBox);
 }
+
+// Called in place of RSSetViewports by the state restore: the viewports were
+// read back from the device, already fixed and scaled
+void STDMETHODCALLTYPE RestoreViewports(ID3D11DeviceContext *context,
+                                        UINT count,
+                                        const D3D11_VIEWPORT *viewports) {
+  RSSetViewports_t set = GetUnhookedRSSetViewports();
+  if (!set)
+    set = Original_RSSetViewports;
+  if (set)
+    set(context, count, viewports);
+  else
+    context->RSSetViewports(count, viewports);
+}
+
+bool PatchCallSites() {
+  for (uintptr_t site : kVramMoveCopySites) {
+    const uintptr_t address = g_moduleBase + site;
+    if (!VerifyBytes(address, kCopyCallEax, sizeof(kCopyCallEax),
+                     "hd_vram_move_gpu copy", kCopyCallEcx))
+      return false;
+  }
+  const uintptr_t restore =
+      g_moduleBase + rde::gpu_state_restore_plus_4b;
+  if (!VerifyBytes(restore, kRestoreViewportsCall,
+                   sizeof(kRestoreViewportsCall), "gpu_state_restore"))
+    return false;
+  for (uintptr_t site : kVramMoveCopySites)
+    InstallCallHook(g_moduleBase + site, (void *)VramMoveCopy,
+                    sizeof(kCopyCallEax));
+  InstallCallHook(restore, (void *)RestoreViewports,
+                  sizeof(kRestoreViewportsCall));
+  return true;
+}
+} // namespace
 
 // Re-entrancy guard: internal CreateTexture2D calls (replacement loading,
 // staging texture creation) must bypass the hook to avoid recursive processing
@@ -236,6 +349,7 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
     const D3D11_SUBRESOURCE_DATA *pInitialData, ID3D11Texture2D **ppTexture2D) {
   MemoryBarrier();
   CreateTexture2D_t pOriginal = Original_CreateTexture2D;
+  void *returnAddress = _ReturnAddress();
 
   if (!pOriginal)
     return E_FAIL;
@@ -245,34 +359,66 @@ HRESULT STDMETHODCALLTYPE Hooked_CreateTexture2D(
   g_inCreateTexture2D = true;
 
   HRESULT hr;
-  bool isUpscaleTarget = pDesc && pDesc->Width == (UINT)BaseWidth &&
-                         pDesc->Height == (UINT)BaseHeight &&
-                         (pDesc->BindFlags & D3D11_BIND_RENDER_TARGET) &&
-                         IsColorFormat(pDesc->Format) && !pInitialData;
+  const bool colour = pDesc && !pInitialData &&
+                      pDesc->Usage == D3D11_USAGE_DEFAULT &&
+                      IsColorFormat(pDesc->Format);
+  const bool vramSized =
+      colour && pDesc->Width == kBaseWidth && pDesc->Height == kBaseHeight;
+  const bool scaled = vramSized || (colour && CalledFromVramMove(returnAddress));
 
-  if (isUpscaleTarget) {
-    // Render target at base resolution: upscale it. No replacement for RTs
-    // (they are blank framebuffers at creation time).
+  if (scaled) {
     D3D11_TEXTURE2D_DESC newDesc = *pDesc;
-    newDesc.Width = (UINT)g_NewWidth;
-    newDesc.Height = (UINT)g_NewHeight;
+    newDesc.Width = std::max(1u, ScaleUnits(pDesc->Width));
+    newDesc.Height = std::max(1u, ScaleUnits(pDesc->Height));
     hr = pOriginal(This, &newDesc, pInitialData, ppTexture2D);
-    // Don't dump upscaled RTs - they have no content yet
+    // An MSAA target too large for the video memory keeps fewer samples
+    while (FAILED(hr) && newDesc.SampleDesc.Count > 2) {
+      newDesc.SampleDesc.Count /= 2;
+      newDesc.SampleDesc.Quality = 0;
+      hr = pOriginal(This, &newDesc, pInitialData, ppTexture2D);
+    }
+    if (SUCCEEDED(hr) && ppTexture2D && *ppTexture2D)
+      TagScaledTexture(*ppTexture2D);
+    else if (vramSized)
+      std::cout << "[Upscale] Could not create the " << newDesc.Width << "x"
+                << newDesc.Height << " VRAM target (0x" << std::hex << hr
+                << std::dec << ")" << std::endl;
   } else {
-    // Non-render-target: try replacement first, then original creation
     if (pDesc && ppTexture2D &&
         TryLoadReplacementTexture(This, pDesc, pInitialData, ppTexture2D)) {
       g_inCreateTexture2D = false;
       return S_OK;
     }
-
     hr = pOriginal(This, pDesc, pInitialData, ppTexture2D);
-    // No dump here: this hook is only active when upscale is enabled, and
-    // dumping is suppressed when upscale or replacement is active.
   }
 
   g_inCreateTexture2D = false;
   return hr;
+}
+
+HRESULT STDMETHODCALLTYPE Hooked_CreatePixelShader_Upscale(
+    ID3D11Device *This, const void *pShaderBytecode, SIZE_T BytecodeLength,
+    ID3D11ClassLinkage *pClassLinkage, ID3D11PixelShader **ppPixelShader) {
+  MemoryBarrier();
+  CreatePixelShader_t pOriginal = Original_CreatePixelShader;
+  if (!pOriginal)
+    return E_FAIL;
+
+  const void *uploadShader = reinterpret_cast<const void *>(
+      g_moduleBase + rde::shader_vram_decode_ps);
+  if (g_createPixelShaderHookReady && ppPixelShader &&
+      pShaderBytecode == uploadShader &&
+      BytecodeLength == rde::shader_vram_decode_ps_size) {
+    if (ID3D11PixelShader *shader = CompileUploadShader(This, pClassLinkage)) {
+      *ppPixelShader = shader;
+      return S_OK;
+    }
+    std::cout << "[Upscale] Upload shader unavailable, CPU uploads into the "
+                 "VRAM target will be misplaced"
+              << std::endl;
+  }
+  return pOriginal(This, pShaderBytecode, BytecodeLength, pClassLinkage,
+                   ppPixelShader);
 }
 
 void RunFirstTimeSetup() {
@@ -286,11 +432,12 @@ void RunFirstTimeSetup() {
     return;
   }
 
-  // Under Wine the upscaler doesn't work; skip interactive setup and set scale
-  // 1
+  // Under Wine the upscaler doesn't work; skip interactive setup and keep the
+  // game's own scale
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   if (ntdll && GetProcAddress(ntdll, "wine_get_version")) {
-    settings.UpdateFile(settingsPath, "upscale_scale", "1");
+    settings.UpdateFile(settingsPath, "resolution_scale",
+                        std::to_string(kGameScale));
     settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
     SetEvent(g_setupCompleteEvent);
     return;
@@ -301,16 +448,10 @@ void RunFirstTimeSetup() {
   std::cout << "       CrossFix - First Run Setup       " << std::endl;
   std::cout << "========================================" << std::endl;
   std::cout << std::endl;
-  std::cout << "Texture upscale (EXPERIMENTAL - may cause crashes/glitches):"
-            << std::endl;
-  std::cout << "  1 - Off (no upscaling)" << std::endl;
-  std::cout << "  2 - 2x - Fastest, lower quality" << std::endl;
-  std::cout << "  3 - 3x - Balanced" << std::endl;
-  std::cout << "  4 - 4x - Best quality, most demanding" << std::endl;
-  std::cout << std::endl;
+  std::cout << "Resolution scale: 1-16 (4 is RDE's default)" << std::endl;
   std::cout << "You can change this later in settings.ini" << std::endl;
   std::cout << std::endl;
-  std::cout << "Enter scale (1/2/3/4) [Enter = off]: ";
+  std::cout << "Enter scale (1-16) [Enter = 4]: ";
 
   std::string line;
   std::getline(std::cin, line);
@@ -320,15 +461,15 @@ void RunFirstTimeSetup() {
     iss >> scaleChoice;
   }
   int scale;
-  if (scaleChoice >= 1 && scaleChoice <= 4) {
+  if (scaleChoice >= kMinScale && scaleChoice <= kMaxScale) {
     scale = scaleChoice;
   } else {
     if (!line.empty())
-      std::cout << "Invalid choice, using 1 (off)" << std::endl;
-    scale = 1;
+      std::cout << "Invalid choice, using 4" << std::endl;
+    scale = kGameScale;
   }
 
-  settings.UpdateFile(settingsPath, "upscale_scale", std::to_string(scale));
+  settings.UpdateFile(settingsPath, "resolution_scale", std::to_string(scale));
   settings.UpdateFile(settingsPath, "upscale_setup_completed", "1");
 
   std::cout << std::endl;
@@ -361,19 +502,23 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
     if (settings.GetBool("texture_dump_enabled", false))
       return;
 
-    int scale = settings.GetInt("upscale_scale", 1);
-
-    if (scale < 1)
-      scale = 1;
-    if (scale > 4)
-      scale = 4;
-
-    if (scale == 1)
+    const int requested =
+        std::clamp(ReadScale(settings), kMinScale, kMaxScale);
+    if (requested == kGameScale)
       return;
 
-    g_ResMultiplier = static_cast<float>(scale);
-    g_NewWidth = BaseWidth * g_ResMultiplier;
-    g_NewHeight = BaseHeight * g_ResMultiplier;
+    const int scale = ProbeScale(pDevice, requested);
+    if (scale != requested)
+      std::cout << "[Upscale] " << requested
+                << "x does not fit the video memory, using " << scale << "x"
+                << std::endl;
+    if (scale == kGameScale)
+      return;
+    g_scale = scale;
+    g_moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandle(NULL));
+
+    if (!PatchCallSites())
+      return;
 
     void **contextVtable = *(void ***)pContext;
     void **deviceVtable = *(void ***)pDevice;
@@ -381,20 +526,26 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
     if (!contextVtable || !deviceVtable)
       return;
 
-    InstallVtableHook(contextVtable, 50, 44, (void *)Hooked_RSSetViewports,
+    InstallVtableHook(contextVtable, 50, kRSSetViewportsIndex,
+                      (void *)Hooked_RSSetViewports,
                       (volatile void **)&Original_RSSetViewports,
                       &g_viewportsHookReady);
 
-    InstallVtableHook(
-        contextVtable, 50, 46, (void *)Hooked_CopySubresourceRegion,
-        (volatile void **)&Original_CopySubresourceRegion, &g_copyHookReady);
+    InstallVtableHook(deviceVtable, 50, kCreatePixelShaderIndex,
+                      (void *)Hooked_CreatePixelShader_Upscale,
+                      (volatile void **)&Original_CreatePixelShader,
+                      &g_createPixelShaderHookReady);
 
-    InstallVtableHook(deviceVtable, 10, 5, (void *)Hooked_CreateTexture2D,
+    InstallVtableHook(deviceVtable, 10, kCreateTexture2DIndex,
+                      (void *)Hooked_CreateTexture2D,
                       (volatile void **)&Original_CreateTexture2D,
                       &g_createTextureHookReady);
 
     g_upscaleActive = true;
-    std::cout << "[Mod] " << scale << "x Upscale enabled" << std::endl;
+    std::cout << "[Mod] Resolution scale " << scale << "x ("
+              << kBaseWidth * scale / kGameScale << "x"
+              << kBaseHeight * scale / kGameScale << " VRAM target)"
+              << std::endl;
 
     Sleep(1);
   } catch (...) {
@@ -402,5 +553,9 @@ void ApplyUpscale4KPatch(ID3D11Device *pDevice, ID3D11DeviceContext *pContext) {
 }
 
 bool IsUpscaleActive() { return g_upscaleActive; }
-float GetUpscaledWidth() { return g_NewWidth; }
-float GetUpscaledHeight() { return g_NewHeight; }
+float GetUpscaledWidth() {
+  return static_cast<float>(kBaseWidth * g_scale / kGameScale);
+}
+float GetUpscaledHeight() {
+  return static_cast<float>(kBaseHeight * g_scale / kGameScale);
+}

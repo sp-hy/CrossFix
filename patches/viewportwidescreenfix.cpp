@@ -48,6 +48,13 @@ void STDMETHODCALLTYPE Hooked_RSSetViewports_ViewportWidescreenFix(
   pOriginal(This, count, vps);
 }
 
+RSSetViewportsFn GetUnhookedRSSetViewports() {
+  MemoryBarrier();
+  return g_viewportWidescreenFixHookReady
+             ? Original_RSSetViewports_ViewportWidescreenFix
+             : nullptr;
+}
+
 void ApplyViewportWidescreenFixPatch(ID3D11Device *pDevice,
                                     ID3D11DeviceContext *pContext) {
   if (!pContext || !pDevice)

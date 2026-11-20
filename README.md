@@ -8,7 +8,7 @@ Supports the latest Steam release v1.0.1.0
 
 - **Widescreen** - Dynamic aspect ratio (16:9, 21:9, 32:9), correct camera boundaries, UI textures, and scaled battle/dialog/shop/save menus
 - **60 FPS Mode** - Unlock the frame rate to 60 FPS everywhere
-- **Upscaling (2x/3x/4x)** - High resolution rendering for 3D elements (experimental)
+- **Resolution scale (1x-16x)** - Renders the 3D picture at any multiple of the PS1 resolution instead of the game's fixed 4x, framebuffer effects such as the battle swirl included
 - **Background Play** - Keep the game running when tabbed out (prevents pause on focus loss)
 - **Mod Loader** - Load replacement assets from a `mods/` folder instead of editing .dat files (experimental)
 - **Texture Replacer** - Replace in-game textures with custom .png or .dds files in `mods/textures/` (hash-based filenames; use texture dump to discover hashes)
@@ -55,8 +55,8 @@ disable_pause_on_focus_loss=1
 #   Textures / upscaling
 # ============================================
 
-# Upscale: 1=off, 2=2x, 3=3x, 4=4x (experimental, may crash on some systems)
-upscale_scale=1
+# Resolution scale: 1-16 (4 is RDE's default).
+resolution_scale=4
 
 # Dump textures to /dump/ (hash filenames). Disables texture resizing and mod loader while on.
 texture_dump_enabled=0
@@ -83,6 +83,9 @@ texture_replace_enabled=0
 
 # Play voice-pack MP3s for field and battle dialogue (mods/<pack>/voices/... or mods/voices/...)
 voices_enabled=0
+
+# Volume of the voice lines, 0-100
+voice_volume=100
 ```
 
 ## Notes
@@ -92,9 +95,9 @@ voices_enabled=0
 - **PGXP:** The game projects 3D vertices to whole pixels (most models and rooms to a quarter pixel in RDE), which makes geometry wobble. With `pgxp_enabled=1` (the default) each projection is recomputed at full precision, including the fractions the game drops when it animates models and combines their joint and object matrices, and the polygons that use it are drawn at the precise position, with perspective-correct textures and culling decided from the precise positions. Polygons the game builds in 2D (menus, sprites) are left alone. F6 switches PGXP off and on while you play (with the game window focused), to compare with the original picture.
 - **Mod Loader:** Create a `mods/` folder next to the game executable. Place replacement assets using the same path structure as inside the .dat files (e.g. `mods/map/mapbin/` for map BINs). Set `mod_loader_enabled=1` in settings.ini (default). Texture dump disables the mod loader while active.
 - **Texture Replacer:** (1) Set `texture_dump_enabled=1`, run the game, and visit the area/UI you want to mod—textures are dumped to `dump/` with filenames like `256x256_0123456789abcdef.dds`. (2) Edit or create a replacement keeping the same name, or use the hash in a new file named `WIDTHxHEIGHT_<16hex>.png` or `.dds` (e.g. `256x256_0123456789abcdef.png`). (3) Put replacement files in `mods/textures/`. (4) Set `texture_dump_enabled=0` and `texture_replace_enabled=1`, then launch the game.
-- **Voices:** With `voices_enabled=1`, the mod plays an MP3 when a dialogue page is shown and stops it when the page changes or the window closes. Every folder in `mods/` is searched in name order (case-insensitive): `mods/<pack>/voices/...`, or `mods/voices/...` for a folder called `voices`; the first file found wins. MP3 files only; packed (.zip) mods are not searched.
-  - **Field:** `voices/<scene>/<dialog>-<page>-<character>.mp3` (e.g. `voices/27/15-0-npc.mp3`). `scene` is the text room id (the map id, 1000 + the map id in the `fin_` ending rooms; `fin_19` tries 1501, then 501), `dialog` the message index in the room, `page` the 0-based page. `character` is the speaker's lowercase name (`serge`, `kid`, `guile` ... `orcha`, a number past the table); the names tried, first found wins: `npc` for no speaker or speaker 0 (else the speaker's name), then `serge` for speaker 0, then the character of the line's leading name tag (`{KID%}` ...), then, for a line without a speaker, the last speaker of the same room.
-  - **Battle:** `voices/battle/<battle id>/<msg>-<page>.mp3` (e.g. `voices/battle/386/0-0.mp3`). `battle id` is the battle's own id (`evt<id>.pac`, not the id whose text rows it reads), `msg` the battle script message index. OpenCross also reads `<msg>-<page>-<unit>.mp3` first; CrossFix reads only the speaker-less form.
+- **Voices:** With `voices_enabled=1`, the mod plays an MP3 when a dialogue page is shown and stops it when the page changes or the window closes. Every folder in `mods/` is searched in name order (case-insensitive): `mods/<pack>/voices/...`; a folder called `voices` is searched as `mods/voices/voices/...`, then as `mods/voices/...`; the first file found wins. MP3 files only; packed (.zip, .7z, .rar) mods are not searched. `voice_volume` (0-100, default 100) sets the loudness of the lines.
+  - **Field:** `voices/<scene>/<dialog>-<page>-<character>.mp3` (e.g. `voices/27/15-0-npc.mp3`). `scene` is the text room id (the map id, 1000 + the map id in the `fin_` ending rooms; `fin_19` tries 1501, then 501), `dialog` the message index in the room, `page` the 0-based page. `character` is the speaker's lowercase name (`serge`, `kid`, `guile` ... `orcha`, a number past the table); the names tried, first found wins: `npc` for no speaker or speaker 0 (else the speaker's name), then `serge` for speaker 0, then the character the line's text names: its leading name tag (`{KID%}` ...), else the speaker, else `kid` (so a line without a speaker or a tag also tries `-kid.mp3`; while Serge wears Lynx's body his lines try `lynx` there), then, for a line without a speaker, the last speaker of the same room.
+  - **Battle:** `voices/battle/<battle id>/<msg>-<page>-<unit>.mp3`, then `voices/battle/<battle id>/<msg>-<page>.mp3` (e.g. `voices/battle/386/0-0-serge.mp3`, `voices/battle/386/0-0.mp3`). `battle id` is the battle's own id (`evt<id>.pac`, not the id whose text rows it reads), `msg` the battle script message index. `unit` is the name, as the battle shows it in the game's language without the enemy letter, of the unit whose script issued the message (a message of the battle's own script uses the first party member), lowercase, with spaces and `\ / : * ? " < > |` removed (`Dead Ahead` -> `deadahead`). That unit is not always the one speaking (battle 386's message 0 is Radius' line issued by Serge's script), so a pack should use the form without the unit unless the unit matters.
   - The console logs each played file and, once, each line with no file.
 
 ## Acknowledgements

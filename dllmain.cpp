@@ -155,7 +155,7 @@ DWORD WINAPI MainThread(LPVOID param) {
   ApplyVerticalBorderRemoverPatch(base);
 
   if (settings.GetBool("voices_enabled", false)) {
-    ApplyVoicesPatch(base);
+    ApplyVoicesPatch(base, settings.GetInt("voice_volume", 100));
   }
 
   if (PgxpEnabled(settings)) {
